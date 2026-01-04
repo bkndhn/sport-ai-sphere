@@ -1,3 +1,4 @@
+import { useNavigate } from "react-router-dom";
 import { Navbar } from "@/components/Navbar";
 import { HeroSection } from "@/components/HeroSection";
 import { StatsBar } from "@/components/StatsBar";
@@ -8,8 +9,12 @@ import { FeaturesGrid } from "@/components/FeaturesGrid";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { ArrowRight, Download } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
 
 const Index = () => {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+
   return (
     <div className="min-h-screen bg-gradient-dark">
       <Navbar />
@@ -61,8 +66,13 @@ const Index = () => {
               to create unforgettable tournament experiences.
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-              <Button variant="hero" size="xl" className="group">
-                Start Free Trial
+              <Button 
+                variant="hero" 
+                size="xl" 
+                className="group"
+                onClick={() => navigate(user ? '/dashboard' : '/auth')}
+              >
+                {user ? 'Go to Dashboard' : 'Start Free Trial'}
                 <ArrowRight className="w-5 h-5 transition-transform group-hover:translate-x-1" />
               </Button>
               <Button variant="glass" size="xl" className="group">

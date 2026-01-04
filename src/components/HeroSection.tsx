@@ -1,8 +1,12 @@
 import { motion } from "framer-motion";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/hooks/useAuth";
 import { ArrowRight, Play, Sparkles, Zap } from "lucide-react";
 
 export const HeroSection = () => {
+  const navigate = useNavigate();
+  const { user } = useAuth();
   return (
     <div className="relative min-h-[85vh] flex items-center justify-center overflow-hidden">
       {/* Background Effects */}
@@ -78,13 +82,23 @@ export const HeroSection = () => {
           transition={{ duration: 0.6, delay: 0.3 }}
           className="flex flex-col sm:flex-row items-center justify-center gap-4"
         >
-          <Button variant="hero" size="xl" className="group">
-            Get Started Free
+          <Button 
+            variant="hero" 
+            size="xl" 
+            className="group"
+            onClick={() => navigate(user ? '/dashboard' : '/auth')}
+          >
+            {user ? 'Go to Dashboard' : 'Get Started Free'}
             <ArrowRight className="w-5 h-5 transition-transform group-hover:translate-x-1" />
           </Button>
-          <Button variant="glass" size="xl" className="group">
+          <Button 
+            variant="glass" 
+            size="xl" 
+            className="group"
+            onClick={() => navigate('/live-scoring')}
+          >
             <Play className="w-5 h-5 transition-transform group-hover:scale-110" />
-            Watch Demo
+            Try Live Scoring
           </Button>
         </motion.div>
 
