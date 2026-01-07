@@ -4,11 +4,16 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/hooks/useAuth";
+import PWAInstallPrompt from "@/components/PWAInstallPrompt";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import Dashboard from "./pages/Dashboard";
 import CreateTournament from "./pages/CreateTournament";
 import LiveScoring from "./pages/LiveScoring";
+import Teams from "./pages/Teams";
+import PlayerAnalytics from "./pages/PlayerAnalytics";
+import MatchSchedule from "./pages/MatchSchedule";
+import SpectatorView from "./pages/SpectatorView";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -19,6 +24,7 @@ const App = () => (
       <TooltipProvider>
         <Toaster />
         <Sonner />
+        <PWAInstallPrompt />
         <BrowserRouter>
           <Routes>
             <Route path="/" element={<Index />} />
@@ -26,6 +32,10 @@ const App = () => (
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/create-tournament" element={<CreateTournament />} />
             <Route path="/live-scoring" element={<LiveScoring />} />
+            <Route path="/teams" element={<Teams />} />
+            <Route path="/analytics" element={<PlayerAnalytics />} />
+            <Route path="/schedule" element={<MatchSchedule />} />
+            <Route path="/spectator" element={<SpectatorView />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>
