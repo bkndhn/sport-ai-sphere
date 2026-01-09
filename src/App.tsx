@@ -9,10 +9,12 @@ import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import Dashboard from "./pages/Dashboard";
 import Tournaments from "./pages/Tournaments";
+import TournamentDetails from "./pages/TournamentDetails";
 import CreateTournament from "./pages/CreateTournament";
 import LiveScoring from "./pages/LiveScoring";
 import Teams from "./pages/Teams";
 import PlayerAnalytics from "./pages/PlayerAnalytics";
+import PlayerProfile from "./pages/PlayerProfile";
 import MatchSchedule from "./pages/MatchSchedule";
 import SpectatorView from "./pages/SpectatorView";
 import Matches from "./pages/Matches";
@@ -34,11 +36,13 @@ const App = () => (
             <Route path="/auth" element={<Auth />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/tournaments" element={<Tournaments />} />
+            <Route path="/tournament/:id" element={<TournamentDetails />} />
             <Route path="/create-tournament" element={<CreateTournament />} />
             <Route path="/live-scoring" element={<LiveScoring />} />
             <Route path="/live-scoring/:matchId" element={<LiveScoring />} />
             <Route path="/teams" element={<Teams />} />
             <Route path="/analytics" element={<PlayerAnalytics />} />
+            <Route path="/player/:id" element={<PlayerProfile />} />
             <Route path="/schedule" element={<MatchSchedule />} />
             <Route path="/matches" element={<Matches />} />
             <Route path="/settings" element={<Settings />} />
