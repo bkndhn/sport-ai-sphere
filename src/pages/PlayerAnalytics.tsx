@@ -17,7 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell } from 'recharts';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Cell } from 'recharts';
 
 interface Player {
   id: string;
@@ -27,6 +27,7 @@ interface Player {
   batting_style: string | null;
   bowling_style: string | null;
   stats: any;
+  image_url: string | null;
   team: {
     id: string;
     name: string;
@@ -34,56 +35,53 @@ interface Player {
   };
 }
 
-// Mock performance data (in real app, this would come from ball_by_ball analysis)
-const generateMockStats = (role: string | null) => {
-  const isBatsman = role === 'Batsman' || role === 'All-Rounder' || role === 'Wicket-Keeper';
-  const isBowler = role === 'Bowler' || role === 'All-Rounder';
-  
-  return {
-    batting: isBatsman ? {
-      matches: Math.floor(Math.random() * 50) + 10,
-      innings: Math.floor(Math.random() * 45) + 8,
-      runs: Math.floor(Math.random() * 2000) + 200,
-      highestScore: Math.floor(Math.random() * 150) + 50,
-      average: (Math.random() * 40 + 15).toFixed(2),
-      strikeRate: (Math.random() * 60 + 100).toFixed(2),
-      fifties: Math.floor(Math.random() * 15),
-      hundreds: Math.floor(Math.random() * 5),
-      fours: Math.floor(Math.random() * 200) + 50,
-      sixes: Math.floor(Math.random() * 80) + 10,
-    } : null,
-    bowling: isBowler ? {
-      matches: Math.floor(Math.random() * 50) + 10,
-      overs: Math.floor(Math.random() * 300) + 50,
-      wickets: Math.floor(Math.random() * 100) + 10,
-      runs: Math.floor(Math.random() * 1500) + 200,
-      bestBowling: `${Math.floor(Math.random() * 6) + 2}/${Math.floor(Math.random() * 30) + 10}`,
-      average: (Math.random() * 25 + 15).toFixed(2),
-      economy: (Math.random() * 4 + 5).toFixed(2),
-      strikeRate: (Math.random() * 20 + 15).toFixed(2),
-      fiveWickets: Math.floor(Math.random() * 3),
-    } : null,
+interface BallByBall {
+  runs: number | null;
+  extras: number | null;
+  is_wicket: boolean | null;
+  wicket_type: string | null;
+  batsman_id: string | null;
+  bowler_id: string | null;
+  fielder_id: string | null;
+  over_number: number;
+  ball_number: number;
+  match: {
+    id: string;
+    scheduled_at: string | null;
   };
-};
+}
 
-// Mock performance trends
-const generateTrendData = () => {
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
-  return months.map(month => ({
-    month,
-    runs: Math.floor(Math.random() * 200) + 50,
-    average: Math.floor(Math.random() * 40) + 20,
-    wickets: Math.floor(Math.random() * 10) + 1,
-  }));
-};
-
-const generateRunDistribution = () => [
-  { name: 'Singles', value: Math.floor(Math.random() * 40) + 30, color: 'hsl(var(--primary))' },
-  { name: 'Doubles', value: Math.floor(Math.random() * 20) + 10, color: 'hsl(var(--accent))' },
-  { name: 'Threes', value: Math.floor(Math.random() * 10) + 2, color: 'hsl(var(--energy))' },
-  { name: 'Fours', value: Math.floor(Math.random() * 20) + 15, color: 'hsl(var(--success))' },
-  { name: 'Sixes', value: Math.floor(Math.random() * 10) + 5, color: 'hsl(var(--live))' },
-];
+interface CalculatedStats {
+  batting: {
+    matches: number;
+    innings: number;
+    runs: number;
+    balls: number;
+    highestScore: number;
+    average: string;
+    strikeRate: string;
+    fifties: number;
+    hundreds: number;
+    fours: number;
+    sixes: number;
+  } | null;
+  bowling: {
+    matches: number;
+    overs: number;
+    wickets: number;
+    runs: number;
+    bestBowling: string;
+    average: string;
+    economy: string;
+    strikeRate: string;
+    fiveWickets: number;
+  } | null;
+  fielding: {
+    catches: number;
+    runOuts: number;
+    stumpings: number;
+  };
+}
 
 const PlayerAnalytics = () => {
   const { user, loading: authLoading } = useAuth();
@@ -93,7 +91,7 @@ const PlayerAnalytics = () => {
   const [players, setPlayers] = useState<Player[]>([]);
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null);
   const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState<any>(null);
+  const [stats, setStats] = useState<CalculatedStats | null>(null);
   const [trendData, setTrendData] = useState<any[]>([]);
   const [runDistribution, setRunDistribution] = useState<any[]>([]);
 
@@ -111,9 +109,7 @@ const PlayerAnalytics = () => {
 
   useEffect(() => {
     if (selectedPlayer) {
-      setStats(generateMockStats(selectedPlayer.role));
-      setTrendData(generateTrendData());
-      setRunDistribution(generateRunDistribution());
+      fetchPlayerStats(selectedPlayer.id);
     }
   }, [selectedPlayer]);
 
@@ -162,6 +158,146 @@ const PlayerAnalytics = () => {
     }
   };
 
+  const fetchPlayerStats = async (playerId: string) => {
+    try {
+      // Fetch all ball-by-ball data for this player
+      const { data: ballData, error } = await supabase
+        .from('ball_by_ball')
+        .select(`
+          runs,
+          extras,
+          is_wicket,
+          wicket_type,
+          batsman_id,
+          bowler_id,
+          fielder_id,
+          over_number,
+          ball_number,
+          match:matches(id, scheduled_at)
+        `)
+        .or(`batsman_id.eq.${playerId},bowler_id.eq.${playerId},fielder_id.eq.${playerId}`);
+
+      if (error) throw error;
+
+      const balls = (ballData || []) as unknown as BallByBall[];
+      
+      // Calculate batting stats
+      const battingBalls = balls.filter(b => b.batsman_id === playerId);
+      const battingMatches = new Set(battingBalls.map(b => b.match?.id)).size;
+      const battingRuns = battingBalls.reduce((sum, b) => sum + (b.runs || 0), 0);
+      const ballsFaced = battingBalls.length;
+      const fours = battingBalls.filter(b => b.runs === 4).length;
+      const sixes = battingBalls.filter(b => b.runs === 6).length;
+      
+      // Calculate innings and scores per innings
+      const inningScores: Record<string, number> = {};
+      battingBalls.forEach(b => {
+        const key = b.match?.id || 'unknown';
+        inningScores[key] = (inningScores[key] || 0) + (b.runs || 0);
+      });
+      const scores = Object.values(inningScores);
+      const highestScore = scores.length > 0 ? Math.max(...scores) : 0;
+      const fifties = scores.filter(s => s >= 50 && s < 100).length;
+      const hundreds = scores.filter(s => s >= 100).length;
+      const dismissals = battingBalls.filter(b => b.is_wicket).length;
+      
+      // Calculate bowling stats
+      const bowlingBalls = balls.filter(b => b.bowler_id === playerId);
+      const bowlingMatches = new Set(bowlingBalls.map(b => b.match?.id)).size;
+      const bowlingRuns = bowlingBalls.reduce((sum, b) => sum + (b.runs || 0) + (b.extras || 0), 0);
+      const bowlingOvers = Math.floor(bowlingBalls.length / 6);
+      const wickets = bowlingBalls.filter(b => b.is_wicket && b.wicket_type !== 'run_out').length;
+      
+      // Best bowling figures per match
+      const matchWickets: Record<string, { wickets: number; runs: number }> = {};
+      bowlingBalls.forEach(b => {
+        const key = b.match?.id || 'unknown';
+        if (!matchWickets[key]) matchWickets[key] = { wickets: 0, runs: 0 };
+        if (b.is_wicket && b.wicket_type !== 'run_out') matchWickets[key].wickets++;
+        matchWickets[key].runs += (b.runs || 0) + (b.extras || 0);
+      });
+      const bestBowling = Object.values(matchWickets).sort((a, b) => b.wickets - a.wickets || a.runs - b.runs)[0];
+      const fiveWickets = Object.values(matchWickets).filter(m => m.wickets >= 5).length;
+      
+      // Calculate fielding stats
+      const catches = balls.filter(b => b.fielder_id === playerId && (b.wicket_type === 'caught' || b.wicket_type === 'caught_behind')).length;
+      const runOuts = balls.filter(b => b.fielder_id === playerId && b.wicket_type === 'run_out').length;
+      const stumpings = balls.filter(b => b.fielder_id === playerId && b.wicket_type === 'stumped').length;
+
+      const player = players.find(p => p.id === playerId);
+      const isBatsman = player?.role === 'Batsman' || player?.role === 'All-Rounder' || player?.role === 'Wicket-Keeper';
+      const isBowler = player?.role === 'Bowler' || player?.role === 'All-Rounder';
+
+      setStats({
+        batting: isBatsman || battingBalls.length > 0 ? {
+          matches: battingMatches,
+          innings: scores.length,
+          runs: battingRuns,
+          balls: ballsFaced,
+          highestScore,
+          average: dismissals > 0 ? (battingRuns / dismissals).toFixed(2) : battingRuns.toFixed(2),
+          strikeRate: ballsFaced > 0 ? ((battingRuns / ballsFaced) * 100).toFixed(2) : '0.00',
+          fifties,
+          hundreds,
+          fours,
+          sixes,
+        } : null,
+        bowling: isBowler || bowlingBalls.length > 0 ? {
+          matches: bowlingMatches,
+          overs: bowlingOvers,
+          wickets,
+          runs: bowlingRuns,
+          bestBowling: bestBowling ? `${bestBowling.wickets}/${bestBowling.runs}` : '-',
+          average: wickets > 0 ? (bowlingRuns / wickets).toFixed(2) : '-',
+          economy: bowlingOvers > 0 ? (bowlingRuns / bowlingOvers).toFixed(2) : '-',
+          strikeRate: wickets > 0 ? (bowlingBalls.length / wickets).toFixed(2) : '-',
+          fiveWickets,
+        } : null,
+        fielding: { catches, runOuts, stumpings },
+      });
+
+      // Generate trend data from actual match data
+      const matchDates = [...new Set(battingBalls.map(b => b.match?.scheduled_at).filter(Boolean))];
+      const trendByMonth: Record<string, { runs: number; wickets: number; count: number }> = {};
+      
+      matchDates.forEach(date => {
+        if (!date) return;
+        const month = new Date(date).toLocaleString('en-US', { month: 'short' });
+        if (!trendByMonth[month]) trendByMonth[month] = { runs: 0, wickets: 0, count: 0 };
+        
+        battingBalls.filter(b => b.match?.scheduled_at === date).forEach(b => {
+          trendByMonth[month].runs += b.runs || 0;
+        });
+        bowlingBalls.filter(b => b.match?.scheduled_at === date).forEach(b => {
+          if (b.is_wicket && b.wicket_type !== 'run_out') trendByMonth[month].wickets++;
+        });
+        trendByMonth[month].count++;
+      });
+
+      const trend = Object.entries(trendByMonth).map(([month, data]) => ({
+        month,
+        runs: data.runs,
+        average: data.count > 0 ? Math.round(data.runs / data.count) : 0,
+        wickets: data.wickets,
+      }));
+      setTrendData(trend.length > 0 ? trend : [{ month: 'No Data', runs: 0, average: 0, wickets: 0 }]);
+
+      // Generate run distribution
+      const distribution = [
+        { name: 'Dots', value: battingBalls.filter(b => b.runs === 0).length, color: 'hsl(var(--muted-foreground))' },
+        { name: 'Singles', value: battingBalls.filter(b => b.runs === 1).length, color: 'hsl(var(--primary))' },
+        { name: 'Doubles', value: battingBalls.filter(b => b.runs === 2).length, color: 'hsl(var(--accent))' },
+        { name: 'Threes', value: battingBalls.filter(b => b.runs === 3).length, color: 'hsl(var(--energy))' },
+        { name: 'Fours', value: fours, color: 'hsl(var(--success))' },
+        { name: 'Sixes', value: sixes, color: 'hsl(var(--live))' },
+      ];
+      setRunDistribution(distribution);
+    } catch (error: any) {
+      console.error('Error fetching player stats:', error);
+      setStats(null);
+    }
+  };
+
   if (authLoading || loading) {
     return (
       <div className="min-h-screen bg-gradient-dark flex items-center justify-center">
@@ -183,7 +319,7 @@ const PlayerAnalytics = () => {
           </button>
           <div className="flex-1">
             <h1 className="text-2xl font-display font-bold">Player Analytics</h1>
-            <p className="text-sm text-muted-foreground">Detailed performance statistics and trends</p>
+            <p className="text-sm text-muted-foreground">Detailed performance statistics from real match data</p>
           </div>
           <div className="w-64">
             <Select 
@@ -221,8 +357,14 @@ const PlayerAnalytics = () => {
             <Card variant="glow" className="mb-8">
               <CardContent className="p-6">
                 <div className="flex flex-col sm:flex-row items-start sm:items-center gap-6">
-                  <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary to-accent flex items-center justify-center text-3xl font-display font-bold text-primary-foreground">
-                    {selectedPlayer.jersey_number || '?'}
+                  <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary to-accent flex items-center justify-center overflow-hidden">
+                    {selectedPlayer.image_url ? (
+                      <img src={selectedPlayer.image_url} alt={selectedPlayer.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <span className="text-3xl font-display font-bold text-primary-foreground">
+                        {selectedPlayer.jersey_number || '?'}
+                      </span>
+                    )}
                   </div>
                   <div className="flex-1">
                     <h2 className="text-2xl font-display font-bold">{selectedPlayer.name}</h2>
@@ -311,6 +453,30 @@ const PlayerAnalytics = () => {
                       </Card>
                     </motion.div>
                   ))}
+                </div>
+              </>
+            )}
+
+            {/* Fielding Stats */}
+            {(stats.fielding.catches > 0 || stats.fielding.runOuts > 0 || stats.fielding.stumpings > 0) && (
+              <>
+                <h3 className="text-lg font-display font-bold mb-4 flex items-center gap-2">
+                  <Award className="w-5 h-5 text-success" />
+                  Fielding Statistics
+                </h3>
+                <div className="grid grid-cols-3 gap-4 mb-8">
+                  <Card variant="gradient" className="p-4">
+                    <div className="text-xs text-muted-foreground mb-2">Catches</div>
+                    <p className="text-2xl font-display font-bold">{stats.fielding.catches}</p>
+                  </Card>
+                  <Card variant="gradient" className="p-4">
+                    <div className="text-xs text-muted-foreground mb-2">Run Outs</div>
+                    <p className="text-2xl font-display font-bold">{stats.fielding.runOuts}</p>
+                  </Card>
+                  <Card variant="gradient" className="p-4">
+                    <div className="text-xs text-muted-foreground mb-2">Stumpings</div>
+                    <p className="text-2xl font-display font-bold">{stats.fielding.stumpings}</p>
+                  </Card>
                 </div>
               </>
             )}
