@@ -1,17 +1,55 @@
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Activity, Trophy, Users, Zap } from "lucide-react";
-
-const stats = [
-  { label: "Active Tournaments", value: "2,847", icon: Trophy, color: "text-primary" },
-  { label: "Live Matches", value: "156", icon: Activity, color: "text-live" },
-  { label: "Total Players", value: "1.2M+", icon: Users, color: "text-accent" },
-  { label: "AI Predictions", value: "98.5%", icon: Zap, color: "text-energy" },
-];
+import { supabase } from "@/integrations/supabase/client";
 
 export const StatsBar = () => {
+  const [stats, setStats] = useState({
+    tournaments: 0,
+    liveMatches: 0,
+    totalPlayers: 0,
+    completedMatches: 0,
+  });
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchStats();
+  }, []);
+
+  const fetchStats = async () => {
+    try {
+      const [tournamentsRes, matchesRes, playersRes] = await Promise.all([
+        supabase.from('tournaments').select('id', { count: 'exact', head: true }),
+        supabase.from('matches').select('id, status'),
+        supabase.from('players').select('id', { count: 'exact', head: true }),
+      ]);
+
+      const liveMatches = matchesRes.data?.filter(m => m.status === 'live').length || 0;
+      const completedMatches = matchesRes.data?.filter(m => m.status === 'completed').length || 0;
+
+      setStats({
+        tournaments: tournamentsRes.count || 0,
+        liveMatches,
+        totalPlayers: playersRes.count || 0,
+        completedMatches,
+      });
+    } catch (error) {
+      console.error('Error fetching stats:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const statsData = [
+    { label: "Active Tournaments", value: loading ? "..." : stats.tournaments.toString(), icon: Trophy, color: "text-primary" },
+    { label: "Live Matches", value: loading ? "..." : stats.liveMatches.toString(), icon: Activity, color: "text-live" },
+    { label: "Total Players", value: loading ? "..." : stats.totalPlayers.toString(), icon: Users, color: "text-accent" },
+    { label: "Completed Matches", value: loading ? "..." : stats.completedMatches.toString(), icon: Zap, color: "text-energy" },
+  ];
+
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
-      {stats.map((stat, index) => (
+      {statsData.map((stat, index) => (
         <motion.div
           key={stat.label}
           initial={{ opacity: 0, y: 20 }}

@@ -110,6 +110,96 @@ export type Database = {
           },
         ]
       }
+      match_summaries: {
+        Row: {
+          best_batter_id: string | null
+          best_bowler_id: string | null
+          best_fielder_id: string | null
+          created_at: string
+          id: string
+          innings1_batting: Json | null
+          innings1_bowling: Json | null
+          innings1_fow: Json | null
+          innings1_score: Json | null
+          innings2_batting: Json | null
+          innings2_bowling: Json | null
+          innings2_fow: Json | null
+          innings2_score: Json | null
+          match_id: string
+          player_of_match_id: string | null
+        }
+        Insert: {
+          best_batter_id?: string | null
+          best_bowler_id?: string | null
+          best_fielder_id?: string | null
+          created_at?: string
+          id?: string
+          innings1_batting?: Json | null
+          innings1_bowling?: Json | null
+          innings1_fow?: Json | null
+          innings1_score?: Json | null
+          innings2_batting?: Json | null
+          innings2_bowling?: Json | null
+          innings2_fow?: Json | null
+          innings2_score?: Json | null
+          match_id: string
+          player_of_match_id?: string | null
+        }
+        Update: {
+          best_batter_id?: string | null
+          best_bowler_id?: string | null
+          best_fielder_id?: string | null
+          created_at?: string
+          id?: string
+          innings1_batting?: Json | null
+          innings1_bowling?: Json | null
+          innings1_fow?: Json | null
+          innings1_score?: Json | null
+          innings2_batting?: Json | null
+          innings2_bowling?: Json | null
+          innings2_fow?: Json | null
+          innings2_score?: Json | null
+          match_id?: string
+          player_of_match_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "match_summaries_best_batter_id_fkey"
+            columns: ["best_batter_id"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "match_summaries_best_bowler_id_fkey"
+            columns: ["best_bowler_id"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "match_summaries_best_fielder_id_fkey"
+            columns: ["best_fielder_id"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "match_summaries_match_id_fkey"
+            columns: ["match_id"]
+            isOneToOne: true
+            referencedRelation: "matches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "match_summaries_player_of_match_id_fkey"
+            columns: ["player_of_match_id"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       matches: {
         Row: {
           created_at: string
@@ -206,12 +296,58 @@ export type Database = {
           },
         ]
       }
+      player_team_history: {
+        Row: {
+          created_at: string
+          id: string
+          joined_at: string
+          left_at: string | null
+          player_id: string
+          stats: Json | null
+          team_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          joined_at?: string
+          left_at?: string | null
+          player_id: string
+          stats?: Json | null
+          team_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          joined_at?: string
+          left_at?: string | null
+          player_id?: string
+          stats?: Json | null
+          team_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "player_team_history_player_id_fkey"
+            columns: ["player_id"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "player_team_history_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       players: {
         Row: {
           batting_style: string | null
           bowling_style: string | null
           created_at: string
           id: string
+          image_url: string | null
           jersey_number: number | null
           name: string
           role: string | null
@@ -225,6 +361,7 @@ export type Database = {
           bowling_style?: string | null
           created_at?: string
           id?: string
+          image_url?: string | null
           jersey_number?: number | null
           name: string
           role?: string | null
@@ -238,6 +375,7 @@ export type Database = {
           bowling_style?: string | null
           created_at?: string
           id?: string
+          image_url?: string | null
           jersey_number?: number | null
           name?: string
           role?: string | null
