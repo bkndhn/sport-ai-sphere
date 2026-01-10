@@ -5,9 +5,9 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { 
+import {
   Activity, ArrowLeft, RotateCcw, Target, Mic, RefreshCw, AlertTriangle,
-  Users, ChevronDown
+  Users, ChevronDown, ChevronUp
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -20,6 +20,7 @@ import {
 import MatchSetup from '@/components/scoring/MatchSetup';
 import DismissalDialog, { DismissalDetails } from '@/components/scoring/DismissalDialog';
 import MatchSummary from '@/components/scoring/MatchSummary';
+import ConfirmDialog from '@/components/ui/ConfirmDialog';
 
 interface Player {
   id: string;
@@ -86,6 +87,7 @@ interface MatchConfig {
   openingBatsman2: Player | null;
   openingBowler: Player | null;
   wicketKeeper: Player | null;
+  matchId?: string; // Database match ID for persistence
 }
 
 interface FallOfWicket {
@@ -95,39 +97,62 @@ interface FallOfWicket {
   over: string;
 }
 
+interface OverHistory {
+  overNumber: number;
+  bowler: Player;
+  runs: number;
+  wickets: number;
+  balls: BallData[];
+  commentary: string[];
+}
+
+interface CommentaryEntry {
+  over: number;
+  ball: number;
+  text: string;
+  type: 'run' | 'boundary' | 'wicket' | 'extra' | 'dot';
+  timestamp: Date;
+}
+
 const LiveScoring = () => {
   const { user, loading: authLoading } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
-  
+
   // Match state
   const [matchConfig, setMatchConfig] = useState<MatchConfig | null>(null);
+  const [matchId, setMatchId] = useState<string | null>(null); // Database match ID for persistence
   const [showSetup, setShowSetup] = useState(true);
-  
+
   // Innings state
   const [currentInnings, setCurrentInnings] = useState(1);
   const [innings1Score, setInnings1Score] = useState<ScoreState>({ runs: 0, wickets: 0, overs: 0, balls: 0 });
   const [innings2Score, setInnings2Score] = useState<ScoreState>({ runs: 0, wickets: 0, overs: 0, balls: 0 });
-  
+
   // Player tracking
   const [striker, setStriker] = useState<Player | null>(null);
   const [nonStriker, setNonStriker] = useState<Player | null>(null);
   const [currentBowler, setCurrentBowler] = useState<Player | null>(null);
-  
+
   // Scorecards
   const [innings1Batting, setInnings1Batting] = useState<BatterStats[]>([]);
   const [innings1Bowling, setInnings1Bowling] = useState<BowlerStats[]>([]);
   const [innings2Batting, setInnings2Batting] = useState<BatterStats[]>([]);
   const [innings2Bowling, setInnings2Bowling] = useState<BowlerStats[]>([]);
-  
+
   // Fall of wickets
   const [innings1FOW, setInnings1FOW] = useState<FallOfWicket[]>([]);
   const [innings2FOW, setInnings2FOW] = useState<FallOfWicket[]>([]);
-  
+
   // Ball tracking
   const [currentOverBalls, setCurrentOverBalls] = useState<BallData[]>([]);
   const [lastBalls, setLastBalls] = useState<BallData[]>([]);
-  
+
+  // Over history and commentary (Cricbuzz-style records)
+  const [innings1OverHistory, setInnings1OverHistory] = useState<OverHistory[]>([]);
+  const [innings2OverHistory, setInnings2OverHistory] = useState<OverHistory[]>([]);
+  const [commentaryLog, setCommentaryLog] = useState<CommentaryEntry[]>([]);
+
   // UI state
   const [aiCommentary, setAiCommentary] = useState<string>('');
   const [loadingCommentary, setLoadingCommentary] = useState(false);
@@ -136,7 +161,12 @@ const LiveScoring = () => {
   const [showMatchSummary, setShowMatchSummary] = useState(false);
   const [showBowlerSelect, setShowBowlerSelect] = useState(false);
   const [showNewBatterSelect, setShowNewBatterSelect] = useState(false);
-  
+  const [showLiveSummary, setShowLiveSummary] = useState(false);
+
+  // Confirmation dialogs
+  const [showUndoConfirm, setShowUndoConfirm] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+
   // Get dismissed batters
   const [dismissedBatters, setDismissedBatters] = useState<Set<string>>(new Set());
   const [usedBowlers, setUsedBowlers] = useState<Map<string, number>>(new Map()); // bowlerId -> overs bowled
@@ -155,6 +185,8 @@ const LiveScoring = () => {
   const setBowlingScorecard = currentInnings === 1 ? setInnings1Bowling : setInnings2Bowling;
   const fallOfWickets = currentInnings === 1 ? innings1FOW : innings2FOW;
   const setFallOfWickets = currentInnings === 1 ? setInnings1FOW : setInnings2FOW;
+  const overHistory = currentInnings === 1 ? innings1OverHistory : innings2OverHistory;
+  const setOverHistory = currentInnings === 1 ? setInnings1OverHistory : setInnings2OverHistory;
 
   const getBattingTeam = () => {
     if (!matchConfig) return null;
@@ -182,15 +214,268 @@ const LiveScoring = () => {
     return matchConfig.team2PlayingXI;
   };
 
-  const handleMatchSetupComplete = (config: MatchConfig) => {
+  // Generate Cricbuzz-style ball commentary
+  const generateBallCommentary = (ballData: BallData, over: number, ball: number): CommentaryEntry => {
+    const { batter, bowler, runs, isWicket, extraType, extras } = ballData;
+    let text = '';
+    let type: CommentaryEntry['type'] = 'run';
+
+    if (isWicket) {
+      text = `OUT! ${batter.name} is dismissed! ${bowler.name} strikes.`;
+      type = 'wicket';
+    } else if (extraType === 'wide') {
+      text = `${bowler.name} bowls a wide, 1 run added to extras.`;
+      type = 'extra';
+    } else if (extraType === 'no_ball') {
+      text = `No ball from ${bowler.name}! Free hit coming up.`;
+      type = 'extra';
+    } else if (extraType === 'bye') {
+      text = `${extras} bye(s) taken by ${batter.name}.`;
+      type = 'extra';
+    } else if (extraType === 'leg_bye') {
+      text = `${extras} leg bye(s) off the pads.`;
+      type = 'extra';
+    } else if (runs === 6) {
+      text = `SIX! ${batter.name} launches ${bowler.name} for a maximum!`;
+      type = 'boundary';
+    } else if (runs === 4) {
+      text = `FOUR! ${batter.name} finds the boundary off ${bowler.name}.`;
+      type = 'boundary';
+    } else if (runs === 0) {
+      text = `Dot ball. Good delivery from ${bowler.name}, ${batter.name} defends.`;
+      type = 'dot';
+    } else if (runs === 1) {
+      text = `Single taken by ${batter.name}. Strike rotated.`;
+      type = 'run';
+    } else if (runs === 2) {
+      text = `Good running! ${batter.name} comes back for 2 runs.`;
+      type = 'run';
+    } else if (runs === 3) {
+      text = `Excellent running! ${batter.name} picks up 3 runs.`;
+      type = 'run';
+    } else {
+      text = `${runs} runs taken by ${batter.name}.`;
+      type = 'run';
+    }
+
+    return {
+      over,
+      ball,
+      text,
+      type,
+      timestamp: new Date(),
+    };
+  };
+
+  // Get remaining batters to bat
+  const getRemainingBatters = () => {
+    const battingXI = getBattingXI();
+    return battingXI.filter(player =>
+      !dismissedBatters.has(player.id) &&
+      player.id !== striker?.id &&
+      player.id !== nonStriker?.id
+    );
+  };
+
+  // ========== BACKEND PERSISTENCE FUNCTIONS ==========
+
+  // Save ball data to database
+  const saveBallToDatabase = async (
+    ballData: BallData,
+    overNumber: number,
+    ballNumber: number,
+    innings: number,
+    dismissalDetails?: DismissalDetails
+  ) => {
+    if (!matchId) return; // No database match linked
+
+    try {
+      const { error } = await supabase.from('ball_by_ball').insert({
+        match_id: matchId,
+        innings: innings,
+        over_number: overNumber,
+        ball_number: ballNumber,
+        runs: ballData.runs,
+        extras: ballData.extras,
+        extra_type: ballData.extraType || null,
+        is_wicket: ballData.isWicket,
+        batsman_id: ballData.batter.id,
+        bowler_id: ballData.bowler.id,
+        wicket_type: dismissalDetails?.type || null,
+        dismissed_player_id: dismissalDetails?.dismissedBatter?.id || null,
+        fielder_id: dismissalDetails?.fielder?.id || null,
+      });
+
+      if (error) {
+        console.error('Error saving ball to database:', error);
+      }
+    } catch (err) {
+      console.error('Error saving ball:', err);
+    }
+  };
+
+  // Update match score in database
+  const updateMatchScore = async () => {
+    if (!matchId || !matchConfig) return;
+
+    try {
+      const team1IsFirstBatting = matchConfig.battingTeam.id === matchConfig.team1.id;
+
+      const scoreData = {
+        team1_score: team1IsFirstBatting ? {
+          runs: innings1Score.runs,
+          wickets: innings1Score.wickets,
+          overs: innings1Score.overs,
+          balls: innings1Score.balls,
+        } : {
+          runs: innings2Score.runs,
+          wickets: innings2Score.wickets,
+          overs: innings2Score.overs,
+          balls: innings2Score.balls,
+        },
+        team2_score: team1IsFirstBatting ? {
+          runs: innings2Score.runs,
+          wickets: innings2Score.wickets,
+          overs: innings2Score.overs,
+          balls: innings2Score.balls,
+        } : {
+          runs: innings1Score.runs,
+          wickets: innings1Score.wickets,
+          overs: innings1Score.overs,
+          balls: innings1Score.balls,
+        },
+        status: 'live' as const,
+        updated_at: new Date().toISOString(),
+      };
+
+      const { error } = await supabase
+        .from('matches')
+        .update(scoreData)
+        .eq('id', matchId);
+
+      if (error) {
+        console.error('Error updating match score:', error);
+      }
+    } catch (err) {
+      console.error('Error updating match:', err);
+    }
+  };
+
+  // Save match summary to database (called at end of match)
+  const saveMatchSummary = async () => {
+    if (!matchId || !matchConfig) return;
+
+    try {
+      // Convert scorecards to JSON format
+      const formatBattingForDB = (scorecard: BatterStats[]) =>
+        scorecard.map(b => ({
+          player_id: b.player.id,
+          player_name: b.player.name,
+          runs: b.runs,
+          balls: b.balls,
+          fours: b.fours,
+          sixes: b.sixes,
+          is_out: b.isOut,
+          dismissal: b.dismissal || null,
+        }));
+
+      const formatBowlingForDB = (scorecard: BowlerStats[]) =>
+        scorecard.map(b => ({
+          player_id: b.player.id,
+          player_name: b.player.name,
+          overs: b.overs,
+          balls: b.balls,
+          maidens: b.maidens,
+          runs: b.runs,
+          wickets: b.wickets,
+        }));
+
+      const formatFOWForDB = (fows: FallOfWicket[]) =>
+        fows.map(f => ({
+          runs: f.runs,
+          wickets: f.wickets,
+          batter: f.batter,
+          over: f.over,
+        }));
+
+      // Find best performers
+      const allBatters = [...innings1Batting, ...innings2Batting];
+      const allBowlers = [...innings1Bowling, ...innings2Bowling];
+      const bestBatter = allBatters.reduce((best, b) => b.runs > (best?.runs || 0) ? b : best, allBatters[0]);
+      const bestBowler = allBowlers.reduce((best, b) => b.wickets > (best?.wickets || 0) ? b : best, allBowlers[0]);
+
+      const { error } = await supabase.from('match_summaries').upsert({
+        match_id: matchId,
+        innings1_score: {
+          runs: innings1Score.runs,
+          wickets: innings1Score.wickets,
+          overs: innings1Score.overs,
+          balls: innings1Score.balls,
+        },
+        innings2_score: {
+          runs: innings2Score.runs,
+          wickets: innings2Score.wickets,
+          overs: innings2Score.overs,
+          balls: innings2Score.balls,
+        },
+        innings1_batting: formatBattingForDB(innings1Batting),
+        innings1_bowling: formatBowlingForDB(innings1Bowling),
+        innings1_fow: formatFOWForDB(innings1FOW),
+        innings2_batting: formatBattingForDB(innings2Batting),
+        innings2_bowling: formatBowlingForDB(innings2Bowling),
+        innings2_fow: formatFOWForDB(innings2FOW),
+        best_batter_id: bestBatter?.player?.id || null,
+        best_bowler_id: bestBowler?.player?.id || null,
+      }, {
+        onConflict: 'match_id',
+      });
+
+      if (error) {
+        console.error('Error saving match summary:', error);
+      } else {
+        toast({
+          title: 'Match Saved!',
+          description: 'All match data has been saved to database.',
+        });
+      }
+    } catch (err) {
+      console.error('Error saving match summary:', err);
+    }
+  };
+
+  // Update match status to completed
+  const completeMatch = async (winnerId: string | null, resultSummary: string) => {
+    if (!matchId) return;
+
+    try {
+      const { error } = await supabase
+        .from('matches')
+        .update({
+          status: 'completed',
+          winner_id: winnerId,
+          result_summary: resultSummary,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', matchId);
+
+      if (error) {
+        console.error('Error completing match:', error);
+      }
+    } catch (err) {
+      console.error('Error completing match:', err);
+    }
+  };
+
+  const handleMatchSetupComplete = (config: MatchConfig, matchDbId?: string) => {
     setMatchConfig(config);
+    setMatchId(matchDbId || null); // Set database match ID for persistence
     setShowSetup(false);
-    
+
     // Initialize first innings
     setStriker(config.openingBatsman1);
     setNonStriker(config.openingBatsman2);
     setCurrentBowler(config.openingBowler);
-    
+
     // Initialize batting scorecard
     if (config.openingBatsman1 && config.openingBatsman2) {
       setInnings1Batting([
@@ -198,17 +483,17 @@ const LiveScoring = () => {
         { player: config.openingBatsman2, runs: 0, balls: 0, fours: 0, sixes: 0, isOut: false },
       ]);
     }
-    
+
     // Initialize bowling scorecard
     if (config.openingBowler) {
       setInnings1Bowling([
         { player: config.openingBowler, overs: 0, balls: 0, maidens: 0, runs: 0, wickets: 0 },
       ]);
     }
-    
+
     toast({
       title: "Match Started!",
-      description: `${config.battingTeam.name} batting first`,
+      description: `${config.battingTeam.name} batting first${matchDbId ? ' - Data will be saved' : ''}`,
     });
   };
 
@@ -217,13 +502,15 @@ const LiveScoring = () => {
     if (currentScore.wickets >= 10) return;
 
     // Determine if this is a legal delivery
-    const isLegal = !extraType || extraType === 'bye' || extraType === 'leg_bye' || extraType === 'ball_not_valid';
+    // Legal deliveries: normal balls, byes, leg byes
+    // NOT legal (must be re-bowled): wide, no_ball, ball_not_valid
+    const isLegal = !extraType || extraType === 'bye' || extraType === 'leg_bye';
     const isBallNotValid = extraType === 'ball_not_valid';
-    
+
     // Calculate runs and extras
     let totalRuns = runs;
     let extras = 0;
-    
+
     if (extraType === 'wide' || extraType === 'no_ball') {
       extras = 1;
       totalRuns = extras; // Wide/No-ball only adds 1 run, no batsman runs
@@ -235,10 +522,10 @@ const LiveScoring = () => {
       extras = 0;
     }
 
-    const ballData: BallData = { 
-      runs: isBallNotValid ? 0 : runs, 
-      isWicket: false, 
-      extras, 
+    const ballData: BallData = {
+      runs: isBallNotValid ? 0 : runs,
+      isWicket: false,
+      extras,
       extraType,
       isLegal,
       batter: striker,
@@ -250,7 +537,7 @@ const LiveScoring = () => {
       setCurrentScore(prev => {
         let newBalls = prev.balls;
         let newOvers = prev.overs;
-        
+
         if (isLegal) {
           newBalls = prev.balls + 1;
           if (newBalls >= 6) {
@@ -269,21 +556,21 @@ const LiveScoring = () => {
 
       // Update batter stats (only for runs scored by batter, not extras)
       if (!extraType || extraType === 'no_ball') {
-        setBattingScorecard(prev => prev.map(b => 
-          b.player.id === striker.id 
-            ? { 
-                ...b, 
-                runs: b.runs + runs, 
-                balls: b.balls + (isLegal ? 1 : 0),
-                fours: b.fours + (runs === 4 ? 1 : 0),
-                sixes: b.sixes + (runs === 6 ? 1 : 0),
-              }
+        setBattingScorecard(prev => prev.map(b =>
+          b.player.id === striker.id
+            ? {
+              ...b,
+              runs: b.runs + runs,
+              balls: b.balls + (isLegal ? 1 : 0),
+              fours: b.fours + (runs === 4 ? 1 : 0),
+              sixes: b.sixes + (runs === 6 ? 1 : 0),
+            }
             : b
         ));
       } else if (isLegal && extraType !== 'wide') {
         // Byes/Leg byes - add ball faced but no runs
-        setBattingScorecard(prev => prev.map(b => 
-          b.player.id === striker.id 
+        setBattingScorecard(prev => prev.map(b =>
+          b.player.id === striker.id
             ? { ...b, balls: b.balls + 1 }
             : b
         ));
@@ -319,26 +606,52 @@ const LiveScoring = () => {
       }
     }
 
+    // Check for over completion BEFORE adding the ball to currentOverBalls
+    const legalBallsAfterThis = currentOverBalls.filter(b => b.isLegal).length + (isLegal ? 1 : 0);
+    const overComplete = isLegal && legalBallsAfterThis === 6;
+
     // Track ball in current over
-    setCurrentOverBalls(prev => {
-      const legalBallsInOver = prev.filter(b => b.isLegal).length;
-      if (legalBallsInOver >= 6) {
-        return [ballData];
-      }
-      return [...prev, ballData];
-    });
+    const updatedOverBalls = [...currentOverBalls, ballData];
+    setCurrentOverBalls(updatedOverBalls);
 
     setLastBalls(prev => [...prev.slice(-11), ballData]);
 
-    // Check for over completion
-    const newBalls = isLegal ? (currentScore.balls + 1) % 6 : currentScore.balls;
-    const overComplete = isLegal && currentScore.balls === 5;
-    
+    // Add commentary entry
+    if (!isBallNotValid) {
+      const commentary = generateBallCommentary(
+        ballData,
+        currentScore.overs,
+        currentScore.balls + (isLegal ? 1 : 0)
+      );
+      setCommentaryLog(prev => [commentary, ...prev]);
+    }
+
     if (overComplete) {
+      // Save over history before clearing
+      const overRuns = updatedOverBalls.reduce((sum, b) => sum + b.runs + b.extras, 0);
+      const overWickets = updatedOverBalls.filter(b => b.isWicket).length;
+      const overCommentary = updatedOverBalls.map(b => {
+        if (b.isWicket) return 'W';
+        if (b.extraType === 'wide') return 'Wd';
+        if (b.extraType === 'no_ball') return 'Nb';
+        if (b.extraType === 'bye') return `B${b.extras}`;
+        if (b.extraType === 'leg_bye') return `Lb${b.extras}`;
+        return b.runs.toString();
+      });
+
+      setOverHistory(prev => [...prev, {
+        overNumber: currentScore.overs + 1,
+        bowler: currentBowler,
+        runs: overRuns,
+        wickets: overWickets,
+        balls: updatedOverBalls,
+        commentary: overCommentary,
+      }]);
+
       // Rotate strike at end of over
       setStriker(nonStriker);
       setNonStriker(striker);
-      
+
       // Update bowler's over count
       setUsedBowlers(prev => {
         const newMap = new Map(prev);
@@ -346,8 +659,8 @@ const LiveScoring = () => {
         newMap.set(currentBowler.id, currentOvers + 1);
         return newMap;
       });
-      
-      // Need new bowler
+
+      // Need new bowler and reset current over balls
       setShowBowlerSelect(true);
       setCurrentOverBalls([]);
     }
@@ -359,6 +672,18 @@ const LiveScoring = () => {
     if (!isBallNotValid) {
       await generateCommentary(ballData);
     }
+
+    // Save to database (runs, overs, wickets - no commentary)
+    if (!isBallNotValid) {
+      saveBallToDatabase(
+        ballData,
+        currentScore.overs,
+        currentScore.balls + (isLegal ? 1 : 0),
+        currentInnings
+      );
+      // Update match score every ball for real-time sync
+      updateMatchScore();
+    }
   };
 
   const handleWicket = () => {
@@ -367,22 +692,38 @@ const LiveScoring = () => {
 
   const confirmWicket = (dismissal: DismissalDetails) => {
     if (!striker || !currentBowler) return;
-    
+
     setShowDismissalDialog(false);
-    
-    const isLegal = dismissal.type !== 'run_out' || true; // Run outs can happen on any ball
+
+    const isLegal = true; // Wicket balls are always legal deliveries
+
+    // Check for over completion BEFORE updating state
+    const legalBallsAfterThis = currentOverBalls.filter(b => b.isLegal).length + 1;
+    const overComplete = legalBallsAfterThis === 6;
+
+    // Create wicket ball data
+    const wicketBallData: BallData = {
+      runs: 0,
+      isWicket: true,
+      extras: 0,
+      isLegal: true,
+      batter: striker,
+      bowler: currentBowler,
+      dismissal: dismissal,
+    };
+
+    // Track ball in current over
+    setCurrentOverBalls(prev => [...prev, wicketBallData]);
+    setLastBalls(prev => [...prev.slice(-11), wicketBallData]);
 
     // Update score
     setCurrentScore(prev => {
-      let newBalls = prev.balls;
+      let newBalls = prev.balls + 1;
       let newOvers = prev.overs;
-      
-      if (isLegal) {
-        newBalls = prev.balls + 1;
-        if (newBalls >= 6) {
-          newOvers = prev.overs + 1;
-          newBalls = 0;
-        }
+
+      if (newBalls >= 6) {
+        newOvers = prev.overs + 1;
+        newBalls = 0;
       }
 
       return {
@@ -395,8 +736,8 @@ const LiveScoring = () => {
 
     // Update batting scorecard
     const dismissalText = formatDismissal(dismissal);
-    setBattingScorecard(prev => prev.map(b => 
-      b.player.id === dismissal.dismissedBatter.id 
+    setBattingScorecard(prev => prev.map(b =>
+      b.player.id === dismissal.dismissedBatter.id
         ? { ...b, isOut: true, dismissal: dismissalText, balls: b.balls + 1 }
         : b
     ));
@@ -431,6 +772,14 @@ const LiveScoring = () => {
     // Track dismissed batter
     setDismissedBatters(prev => new Set([...prev, dismissal.dismissedBatter.id]));
 
+    // Add wicket commentary
+    const wicketCommentary = generateBallCommentary(
+      wicketBallData,
+      currentScore.overs,
+      currentScore.balls + 1
+    );
+    setCommentaryLog(prev => [wicketCommentary, ...prev]);
+
     // Need new batter (unless all out)
     if (currentScore.wickets + 1 < 10) {
       // Determine which batter to replace
@@ -442,9 +791,30 @@ const LiveScoring = () => {
       setShowNewBatterSelect(true);
     }
 
-    // Check if over complete
-    const overComplete = currentScore.balls === 5;
+    // Handle over completion
     if (overComplete && currentScore.wickets + 1 < 10) {
+      // Save over history before clearing
+      const updatedOverBalls = [...currentOverBalls, wicketBallData];
+      const overRuns = updatedOverBalls.reduce((sum, b) => sum + b.runs + b.extras, 0);
+      const overWickets = updatedOverBalls.filter(b => b.isWicket).length;
+      const overCommentaryItems = updatedOverBalls.map(b => {
+        if (b.isWicket) return 'W';
+        if (b.extraType === 'wide') return 'Wd';
+        if (b.extraType === 'no_ball') return 'Nb';
+        if (b.extraType === 'bye') return `B${b.extras}`;
+        if (b.extraType === 'leg_bye') return `Lb${b.extras}`;
+        return b.runs.toString();
+      });
+
+      setOverHistory(prev => [...prev, {
+        overNumber: currentScore.overs + 1,
+        bowler: currentBowler,
+        runs: overRuns,
+        wickets: overWickets,
+        balls: updatedOverBalls,
+        commentary: overCommentaryItems,
+      }]);
+
       // Rotate strike and need new bowler
       if (striker && nonStriker) {
         setStriker(nonStriker);
@@ -468,6 +838,16 @@ const LiveScoring = () => {
       title: 'Wicket!',
       description: `${dismissal.dismissedBatter.name} - ${dismissalText}`,
     });
+
+    // Save wicket to database
+    saveBallToDatabase(
+      wicketBallData,
+      currentScore.overs,
+      currentScore.balls + 1,
+      currentInnings,
+      dismissal
+    );
+    updateMatchScore();
   };
 
   const formatDismissal = (dismissal: DismissalDetails): string => {
@@ -487,7 +867,7 @@ const LiveScoring = () => {
 
   const checkInningsEnd = () => {
     if (!matchConfig) return;
-    
+
     const score = currentInnings === 1 ? innings1Score : innings2Score;
     const allOut = score.wickets >= 10;
     const oversComplete = score.overs >= matchConfig.totalOvers;
@@ -496,8 +876,29 @@ const LiveScoring = () => {
     if (allOut || oversComplete || targetChased) {
       if (currentInnings === 1) {
         setShowInningsSummary(true);
+        // Save innings 1 data to database
+        updateMatchScore();
       } else {
         setShowMatchSummary(true);
+        // Save complete match data to database
+        saveMatchSummary();
+
+        // Determine match result and save
+        const diff = innings2Score.runs - innings1Score.runs;
+        let winnerId: string | null = null;
+        let resultSummary = '';
+
+        if (diff > 0) {
+          winnerId = getBowlingTeam()?.id || null; // Team 2 (was bowling in innings 1)
+          resultSummary = `${getBowlingTeam()?.name} wins by ${10 - innings2Score.wickets} wickets`;
+        } else if (diff < 0) {
+          winnerId = getBattingTeam()?.id || null; // Team 1 (was batting in innings 1)
+          resultSummary = `${getBattingTeam()?.name} wins by ${Math.abs(diff)} runs`;
+        } else {
+          resultSummary = 'Match Tied';
+        }
+
+        completeMatch(winnerId, resultSummary);
       }
     }
   };
@@ -510,19 +911,19 @@ const LiveScoring = () => {
     setCurrentOverBalls([]);
     setLastBalls([]);
     setAiCommentary('');
-    
+
     // Initialize second innings - swap batting/bowling
     const newBattingTeam = getBowlingTeam();
     const newBowlingTeam = getBattingTeam();
-    
+
     if (!newBattingTeam || !newBowlingTeam) return;
-    
+
     // Set initial players to null - user will need to select
     setStriker(null);
     setNonStriker(null);
     setCurrentBowler(null);
     setShowNewBatterSelect(true);
-    
+
     toast({
       title: "Second Innings",
       description: `${newBattingTeam.name} need ${innings1Score.runs + 1} runs to win`,
@@ -533,7 +934,7 @@ const LiveScoring = () => {
     const battingXI = getBattingXI();
     const newBatter = battingXI.find(p => p.id === playerId);
     if (!newBatter) return;
-    
+
     // Add to scorecard if not already there
     setBattingScorecard(prev => {
       const exists = prev.find(b => b.player.id === playerId);
@@ -542,7 +943,7 @@ const LiveScoring = () => {
       }
       return prev;
     });
-    
+
     if (!striker) {
       setStriker(newBatter);
       if (!nonStriker && currentInnings === 2) {
@@ -552,7 +953,7 @@ const LiveScoring = () => {
     } else if (!nonStriker) {
       setNonStriker(newBatter);
     }
-    
+
     // Check if we have both batters
     if ((striker || newBatter) && (nonStriker || (!striker && newBatter))) {
       setShowNewBatterSelect(false);
@@ -563,7 +964,7 @@ const LiveScoring = () => {
     const bowlingXI = getBowlingXI();
     const newBowler = bowlingXI.find(p => p.id === playerId);
     if (!newBowler) return;
-    
+
     // Add to scorecard if not already there
     setBowlingScorecard(prev => {
       const exists = prev.find(b => b.player.id === playerId);
@@ -572,20 +973,20 @@ const LiveScoring = () => {
       }
       return prev;
     });
-    
+
     setCurrentBowler(newBowler);
     setShowBowlerSelect(false);
   };
 
   const undoLastBall = () => {
     if (lastBalls.length === 0) return;
-    
+
     const lastBall = lastBalls[lastBalls.length - 1];
-    
+
     setCurrentScore(prev => {
       let newBalls = prev.balls;
       let newOvers = prev.overs;
-      
+
       if (lastBall.isLegal) {
         if (prev.balls === 0 && prev.overs > 0) {
           newOvers = prev.overs - 1;
@@ -594,7 +995,7 @@ const LiveScoring = () => {
           newBalls = prev.balls - 1;
         }
       }
-      
+
       return {
         ...prev,
         runs: Math.max(0, prev.runs - lastBall.runs - lastBall.extras),
@@ -603,11 +1004,11 @@ const LiveScoring = () => {
         balls: newBalls,
       };
     });
-    
+
     setLastBalls(prev => prev.slice(0, -1));
     setCurrentOverBalls(prev => prev.slice(0, -1));
     setAiCommentary('');
-    
+
     toast({
       title: "Ball undone",
       description: "Last ball has been removed",
@@ -654,6 +1055,7 @@ const LiveScoring = () => {
 
   const resetMatch = () => {
     setMatchConfig(null);
+    setMatchId(null); // Clear database match link
     setShowSetup(true);
     setCurrentInnings(1);
     setInnings1Score({ runs: 0, wickets: 0, overs: 0, balls: 0 });
@@ -664,6 +1066,9 @@ const LiveScoring = () => {
     setInnings2Bowling([]);
     setInnings1FOW([]);
     setInnings2FOW([]);
+    setInnings1OverHistory([]);
+    setInnings2OverHistory([]);
+    setCommentaryLog([]);
     setStriker(null);
     setNonStriker(null);
     setCurrentBowler(null);
@@ -738,7 +1143,7 @@ const LiveScoring = () => {
       <div className="min-h-screen bg-gradient-dark py-6 px-4">
         <div className="max-w-4xl mx-auto">
           <div className="flex items-center gap-4 mb-6">
-            <button 
+            <button
               onClick={() => navigate(-1)}
               className="p-2 rounded-lg hover:bg-secondary transition-colors"
             >
@@ -749,8 +1154,8 @@ const LiveScoring = () => {
               <p className="text-sm text-muted-foreground">Set up your match</p>
             </div>
           </div>
-          
-          <MatchSetup 
+
+          <MatchSetup
             onComplete={handleMatchSetupComplete}
             onCancel={() => navigate('/dashboard')}
           />
@@ -808,7 +1213,7 @@ const LiveScoring = () => {
       <div className="max-w-4xl mx-auto">
         {/* Header */}
         <div className="flex items-center gap-4 mb-4">
-          <button 
+          <button
             onClick={() => navigate(-1)}
             className="p-2 rounded-lg hover:bg-secondary transition-colors"
           >
@@ -1006,26 +1411,26 @@ const LiveScoring = () => {
 
             {/* Actions */}
             <div className="flex gap-2">
-              <Button 
-                variant="ghost" 
+              <Button
+                variant="ghost"
                 size="sm"
-                onClick={undoLastBall}
+                onClick={() => setShowUndoConfirm(true)}
                 disabled={lastBalls.length === 0}
               >
                 <RotateCcw className="w-4 h-4 mr-1" />
                 Undo
               </Button>
-              <Button 
+              <Button
                 variant="outline"
                 size="sm"
-                onClick={resetMatch}
+                onClick={() => setShowResetConfirm(true)}
               >
                 <RefreshCw className="w-4 h-4 mr-1" />
                 Reset
               </Button>
               {currentInnings === 1 && (
-                <Button 
-                  variant="hero" 
+                <Button
+                  variant="hero"
                   size="sm"
                   className="flex-1"
                   onClick={() => setShowInningsSummary(true)}
@@ -1059,6 +1464,239 @@ const LiveScoring = () => {
             </CardContent>
           </Card>
         )}
+
+        {/* Live Match Summary Panel */}
+        <Card variant="gradient" className="mb-4">
+          <button
+            onClick={() => setShowLiveSummary(!showLiveSummary)}
+            className="w-full p-4 flex items-center justify-between hover:bg-secondary/30 transition-colors rounded-t-xl"
+          >
+            <div className="flex items-center gap-2">
+              <Activity className="w-4 h-4 text-primary" />
+              <span className="font-semibold">Match Records</span>
+              <span className="text-xs text-muted-foreground">
+                (W: {currentScore.wickets} | Overs: {currentScore.overs}.{currentScore.balls})
+              </span>
+            </div>
+            {showLiveSummary ? (
+              <ChevronUp className="w-4 h-4 text-muted-foreground" />
+            ) : (
+              <ChevronDown className="w-4 h-4 text-muted-foreground" />
+            )}
+          </button>
+
+          {showLiveSummary && (
+            <CardContent className="pt-0 pb-4 px-4 space-y-4">
+              {/* Over-by-Over History (Cricbuzz style) */}
+              {overHistory.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-semibold mb-2 text-primary flex items-center gap-2">
+                    <span>📊</span> Over-by-Over
+                  </h4>
+                  <div className="space-y-2 max-h-40 overflow-y-auto">
+                    {[...overHistory].reverse().map((over, idx) => (
+                      <div
+                        key={idx}
+                        className="p-2 rounded-lg bg-secondary/30 text-xs flex items-center justify-between"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-primary">Over {over.overNumber}</span>
+                          <span className="text-muted-foreground">({over.bowler.name})</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="flex gap-1">
+                            {over.commentary.map((ball, ballIdx) => (
+                              <span
+                                key={ballIdx}
+                                className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold
+                                  ${ball === 'W' ? 'bg-destructive text-white' :
+                                    ball === '6' ? 'bg-energy text-white' :
+                                      ball === '4' ? 'bg-accent text-white' :
+                                        ball === '0' ? 'bg-secondary text-muted-foreground' :
+                                          ball.startsWith('Wd') || ball.startsWith('Nb') ? 'bg-yellow-500/30 text-yellow-400' :
+                                            'bg-primary/20 text-primary'}`}
+                              >
+                                {ball}
+                              </span>
+                            ))}
+                          </div>
+                          <span className={`font-semibold ${over.wickets > 0 ? 'text-destructive' : 'text-foreground'}`}>
+                            {over.runs} runs {over.wickets > 0 && `• ${over.wickets}W`}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Ball-by-Ball Commentary */}
+              {commentaryLog.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-semibold mb-2 text-primary flex items-center gap-2">
+                    <span>🎙️</span> Ball-by-Ball Commentary
+                  </h4>
+                  <div className="space-y-1.5 max-h-32 overflow-y-auto">
+                    {commentaryLog.slice(0, 10).map((entry, idx) => (
+                      <div
+                        key={idx}
+                        className={`p-2 rounded-lg text-xs border-l-2 
+                          ${entry.type === 'wicket' ? 'bg-destructive/10 border-destructive' :
+                            entry.type === 'boundary' ? 'bg-accent/10 border-accent' :
+                              entry.type === 'dot' ? 'bg-secondary/30 border-secondary' :
+                                'bg-primary/5 border-primary/30'}`}
+                      >
+                        <span className="font-semibold text-muted-foreground">
+                          {entry.over}.{entry.ball}
+                        </span>
+                        <span className="ml-2">{entry.text}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Remaining Batters to Bat */}
+              {getRemainingBatters().length > 0 && (
+                <div>
+                  <h4 className="text-sm font-semibold mb-2 text-primary flex items-center gap-2">
+                    <span>🏏</span> Yet to Bat ({getRemainingBatters().length})
+                  </h4>
+                  <div className="flex flex-wrap gap-1.5">
+                    {getRemainingBatters().map((player) => (
+                      <span
+                        key={player.id}
+                        className="px-2 py-1 rounded-lg bg-secondary/50 text-xs font-medium"
+                      >
+                        {player.name} {player.jersey_number ? `#${player.jersey_number}` : ''}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Batting Scorecard */}
+              <div>
+                <h4 className="text-sm font-semibold mb-2 text-primary flex items-center gap-2">
+                  <span>🏏</span> Batting
+                </h4>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-muted-foreground border-b border-border">
+                        <th className="text-left py-1.5">Batter</th>
+                        <th className="text-right py-1.5">R</th>
+                        <th className="text-right py-1.5">B</th>
+                        <th className="text-right py-1.5">4s</th>
+                        <th className="text-right py-1.5">6s</th>
+                        <th className="text-right py-1.5">SR</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {battingScorecard.map((batter) => (
+                        <tr key={batter.player.id} className="border-b border-border/30">
+                          <td className="py-1.5">
+                            <span className={`${!batter.isOut ? 'text-accent font-medium' : ''}`}>
+                              {batter.player.name}
+                              {!batter.isOut && ' *'}
+                            </span>
+                            {batter.dismissal && (
+                              <span className="block text-[10px] text-muted-foreground">{batter.dismissal}</span>
+                            )}
+                          </td>
+                          <td className="text-right font-semibold">{batter.runs}</td>
+                          <td className="text-right text-muted-foreground">{batter.balls}</td>
+                          <td className="text-right text-muted-foreground">{batter.fours}</td>
+                          <td className="text-right text-muted-foreground">{batter.sixes}</td>
+                          <td className="text-right text-muted-foreground">
+                            {batter.balls > 0 ? ((batter.runs / batter.balls) * 100).toFixed(1) : '0.0'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Bowling Scorecard */}
+              <div>
+                <h4 className="text-sm font-semibold mb-2 text-primary flex items-center gap-2">
+                  <span>🎯</span> Bowling
+                </h4>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-muted-foreground border-b border-border">
+                        <th className="text-left py-1.5">Bowler</th>
+                        <th className="text-right py-1.5">O</th>
+                        <th className="text-right py-1.5">M</th>
+                        <th className="text-right py-1.5">R</th>
+                        <th className="text-right py-1.5">W</th>
+                        <th className="text-right py-1.5">Econ</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {bowlingScorecard.filter(b => b.overs > 0 || b.balls > 0).map((bowler) => (
+                        <tr key={bowler.player.id} className="border-b border-border/30">
+                          <td className="py-1.5 font-medium">{bowler.player.name}</td>
+                          <td className="text-right">{bowler.overs}.{bowler.balls}</td>
+                          <td className="text-right text-muted-foreground">{bowler.maidens}</td>
+                          <td className="text-right">{bowler.runs}</td>
+                          <td className="text-right font-semibold text-primary">{bowler.wickets}</td>
+                          <td className="text-right text-muted-foreground">
+                            {(bowler.overs + bowler.balls / 6) > 0
+                              ? (bowler.runs / (bowler.overs + bowler.balls / 6)).toFixed(2)
+                              : '0.00'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Fall of Wickets */}
+              {fallOfWickets.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-semibold mb-2 text-primary flex items-center gap-2">
+                    <span>💥</span> Fall of Wickets
+                  </h4>
+                  <div className="flex flex-wrap gap-1.5">
+                    {fallOfWickets.map((fow, index) => (
+                      <div
+                        key={index}
+                        className="px-2 py-1 rounded-lg bg-destructive/10 text-xs border border-destructive/30"
+                      >
+                        <span className="font-semibold">{fow.runs}/{fow.wickets}</span>
+                        <span className="text-muted-foreground ml-1">({fow.batter}, {fow.over})</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Match Stats */}
+              <div className="grid grid-cols-4 gap-2 pt-2 border-t border-border">
+                <div className="text-center p-2 rounded-lg bg-secondary/30">
+                  <p className="text-lg font-bold text-primary">{currentScore.runs}</p>
+                  <p className="text-[10px] text-muted-foreground">Runs</p>
+                </div>
+                <div className="text-center p-2 rounded-lg bg-secondary/30">
+                  <p className="text-lg font-bold text-destructive">{currentScore.wickets}</p>
+                  <p className="text-[10px] text-muted-foreground">Wickets</p>
+                </div>
+                <div className="text-center p-2 rounded-lg bg-secondary/30">
+                  <p className="text-lg font-bold text-accent">{currentScore.overs}.{currentScore.balls}</p>
+                  <p className="text-[10px] text-muted-foreground">Overs</p>
+                </div>
+                <div className="text-center p-2 rounded-lg bg-secondary/30">
+                  <p className="text-lg font-bold text-energy">{overHistory.length}</p>
+                  <p className="text-[10px] text-muted-foreground">Complete</p>
+                </div>
+              </div>
+            </CardContent>
+          )}
+        </Card>
 
         {/* Bowler Selection Dialog */}
         {showBowlerSelect && (
@@ -1132,6 +1770,27 @@ const LiveScoring = () => {
           fielders={getBowlingXI()}
           currentBowler={currentBowler}
           striker={striker}
+        />
+
+        {/* Confirmation Dialogs */}
+        <ConfirmDialog
+          open={showUndoConfirm}
+          onOpenChange={setShowUndoConfirm}
+          title="Undo Last Ball?"
+          description="This will remove the last recorded ball and reverse any runs, wickets, or overs. This action cannot be redone."
+          confirmText="Undo Ball"
+          variant="default"
+          onConfirm={undoLastBall}
+        />
+
+        <ConfirmDialog
+          open={showResetConfirm}
+          onOpenChange={setShowResetConfirm}
+          title="Reset Match?"
+          description="This will clear all match data including scores, scorecards, and progress. You will need to set up the match again from scratch. This action cannot be undone."
+          confirmText="Reset Match"
+          variant="destructive"
+          onConfirm={resetMatch}
         />
       </div>
     </div>

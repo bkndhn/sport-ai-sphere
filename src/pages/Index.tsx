@@ -18,7 +18,7 @@ const Index = () => {
   return (
     <div className="min-h-screen bg-gradient-dark">
       <Navbar />
-      
+
       {/* Hero Section */}
       <HeroSection />
 
@@ -47,28 +47,25 @@ const Index = () => {
 
       {/* CTA Section */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
+        <div
           className="relative overflow-hidden rounded-3xl bg-gradient-card border border-border p-8 md:p-12 text-center"
         >
           {/* Background glow */}
           <div className="absolute inset-0 bg-hero-gradient opacity-50" />
-          
+
           <div className="relative z-10">
             <h2 className="font-display text-3xl sm:text-4xl font-bold mb-4">
               Ready to Transform Your
               <span className="text-gradient-primary"> Tournaments?</span>
             </h2>
             <p className="text-muted-foreground max-w-xl mx-auto mb-8">
-              Join thousands of sports organizations already using SportSphere AI 
+              Join thousands of sports organizations already using SportSphere AI
               to create unforgettable tournament experiences.
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-              <Button 
-                variant="hero" 
-                size="xl" 
+              <Button
+                variant="hero"
+                size="xl"
                 className="group"
                 onClick={() => navigate(user ? '/dashboard' : '/auth')}
               >
@@ -81,7 +78,7 @@ const Index = () => {
               </Button>
             </div>
           </div>
-        </motion.div>
+        </div>
       </section>
 
       {/* Footer */}

@@ -14,7 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { 
+import {
   Users, ChevronRight, ChevronLeft, Trophy, Target, Check
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
@@ -47,10 +47,11 @@ interface MatchConfig {
   openingBatsman2: Player | null;
   openingBowler: Player | null;
   wicketKeeper: Player | null;
+  matchId?: string; // Database match ID for persistence
 }
 
 interface MatchSetupProps {
-  onComplete: (config: MatchConfig) => void;
+  onComplete: (config: MatchConfig, matchId?: string) => void;
   onCancel: () => void;
 }
 
@@ -60,23 +61,23 @@ const MatchSetup = ({ onComplete, onCancel }: MatchSetupProps) => {
   const [step, setStep] = useState(1);
   const [teams, setTeams] = useState<Team[]>([]);
   const [loading, setLoading] = useState(true);
-  
+
   // Step 1: Team Selection
   const [selectedTeam1Id, setSelectedTeam1Id] = useState<string>('');
   const [selectedTeam2Id, setSelectedTeam2Id] = useState<string>('');
-  
+
   // Step 2: Playing XI
   const [team1PlayingXI, setTeam1PlayingXI] = useState<string[]>([]);
   const [team2PlayingXI, setTeam2PlayingXI] = useState<string[]>([]);
-  
+
   // Step 3: Match Config
   const [totalOvers, setTotalOvers] = useState(20);
   const [maxOversPerBowler, setMaxOversPerBowler] = useState<number | null>(4);
-  
+
   // Step 4: Toss
   const [tossWinner, setTossWinner] = useState<'team1' | 'team2'>('team1');
   const [tossDecision, setTossDecision] = useState<'bat' | 'bowl'>('bat');
-  
+
   // Step 5: Opening Players
   const [openingBatsman1Id, setOpeningBatsman1Id] = useState<string>('');
   const [openingBatsman2Id, setOpeningBatsman2Id] = useState<string>('');
@@ -113,10 +114,10 @@ const MatchSetup = ({ onComplete, onCancel }: MatchSetupProps) => {
   const team1 = teams.find(t => t.id === selectedTeam1Id);
   const team2 = teams.find(t => t.id === selectedTeam2Id);
 
-  const battingTeam = tossDecision === 'bat' 
+  const battingTeam = tossDecision === 'bat'
     ? (tossWinner === 'team1' ? team1 : team2)
     : (tossWinner === 'team1' ? team2 : team1);
-  
+
   const bowlingTeam = tossDecision === 'bat'
     ? (tossWinner === 'team1' ? team2 : team1)
     : (tossWinner === 'team1' ? team1 : team2);
@@ -127,7 +128,7 @@ const MatchSetup = ({ onComplete, onCancel }: MatchSetupProps) => {
   const togglePlayer = (teamNum: 1 | 2, playerId: string) => {
     const setFn = teamNum === 1 ? setTeam1PlayingXI : setTeam2PlayingXI;
     const current = teamNum === 1 ? team1PlayingXI : team2PlayingXI;
-    
+
     if (current.includes(playerId)) {
       setFn(current.filter(id => id !== playerId));
     } else if (current.length < 11) {
@@ -148,34 +149,124 @@ const MatchSetup = ({ onComplete, onCancel }: MatchSetupProps) => {
       case 4:
         return true;
       case 5:
-        return openingBatsman1Id && openingBatsman2Id && openingBowlerId && 
-               openingBatsman1Id !== openingBatsman2Id;
+        return openingBatsman1Id && openingBatsman2Id && openingBowlerId &&
+          openingBatsman1Id !== openingBatsman2Id;
       default:
         return false;
     }
   };
 
-  const handleComplete = () => {
-    if (!team1 || !team2 || !battingTeam || !bowlingTeam) return;
+  const handleComplete = async () => {
+    if (!team1 || !team2 || !battingTeam || !bowlingTeam || !user) return;
 
-    const config: MatchConfig = {
-      team1,
-      team2,
-      team1PlayingXI: team1.players.filter(p => team1PlayingXI.includes(p.id)),
-      team2PlayingXI: team2.players.filter(p => team2PlayingXI.includes(p.id)),
-      totalOvers,
-      maxOversPerBowler,
-      tossWinner,
-      tossDecision,
-      battingTeam,
-      bowlingTeam,
-      openingBatsman1: battingTeam.players.find(p => p.id === openingBatsman1Id) || null,
-      openingBatsman2: battingTeam.players.find(p => p.id === openingBatsman2Id) || null,
-      openingBowler: bowlingTeam.players.find(p => p.id === openingBowlerId) || null,
-      wicketKeeper: bowlingTeam.players.find(p => p.id === wicketKeeperId) || null,
-    };
+    try {
+      // First, find or create a tournament to associate the match with
+      // For now, use a "Quick Match" tournament approach - find existing or create new
+      let tournamentId: string | null = null;
 
-    onComplete(config);
+      const { data: existingTournaments } = await supabase
+        .from('tournaments')
+        .select('id')
+        .eq('organizer_id', user.id)
+        .eq('name', 'Quick Matches')
+        .limit(1);
+
+      if (existingTournaments && existingTournaments.length > 0) {
+        tournamentId = existingTournaments[0].id;
+      } else {
+        // Create a "Quick Matches" tournament for casual games
+        const { data: newTournament, error: tournamentError } = await supabase
+          .from('tournaments')
+          .insert({
+            name: 'Quick Matches',
+            organizer_id: user.id,
+            sport: 'cricket',
+            format: 'custom',
+            status: 'active',
+          })
+          .select('id')
+          .single();
+
+        if (tournamentError) throw tournamentError;
+        tournamentId = newTournament?.id || null;
+      }
+
+      if (!tournamentId) {
+        throw new Error('Could not create tournament for match');
+      }
+
+      // Create the match in database
+      const { data: matchData, error: matchError } = await supabase
+        .from('matches')
+        .insert({
+          tournament_id: tournamentId,
+          team1_id: team1.id,
+          team2_id: team2.id,
+          status: 'live',
+          toss_winner_id: tossWinner === 'team1' ? team1.id : team2.id,
+          toss_decision: tossDecision,
+          team1_score: { runs: 0, wickets: 0, overs: 0, balls: 0 },
+          team2_score: { runs: 0, wickets: 0, overs: 0, balls: 0 },
+        })
+        .select('id')
+        .single();
+
+      if (matchError) throw matchError;
+
+      const matchId = matchData?.id;
+
+      const config: MatchConfig = {
+        team1,
+        team2,
+        team1PlayingXI: team1.players.filter(p => team1PlayingXI.includes(p.id)),
+        team2PlayingXI: team2.players.filter(p => team2PlayingXI.includes(p.id)),
+        totalOvers,
+        maxOversPerBowler,
+        tossWinner,
+        tossDecision,
+        battingTeam,
+        bowlingTeam,
+        openingBatsman1: battingTeam.players.find(p => p.id === openingBatsman1Id) || null,
+        openingBatsman2: battingTeam.players.find(p => p.id === openingBatsman2Id) || null,
+        openingBowler: bowlingTeam.players.find(p => p.id === openingBowlerId) || null,
+        wicketKeeper: bowlingTeam.players.find(p => p.id === wicketKeeperId) || null,
+        matchId,
+      };
+
+      toast({
+        title: 'Match Created!',
+        description: 'All scoring data will be saved automatically.',
+      });
+
+      onComplete(config, matchId);
+    } catch (error: any) {
+      console.error('Error creating match:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Error creating match',
+        description: error.message || 'Match data will not be saved to database.',
+      });
+
+      // Still allow the match to proceed without database
+      const config: MatchConfig = {
+        team1,
+        team2,
+        team1PlayingXI: team1.players.filter(p => team1PlayingXI.includes(p.id)),
+        team2PlayingXI: team2.players.filter(p => team2PlayingXI.includes(p.id)),
+        totalOvers,
+        maxOversPerBowler,
+        tossWinner,
+        tossDecision,
+        battingTeam,
+        bowlingTeam,
+        openingBatsman1: battingTeam.players.find(p => p.id === openingBatsman1Id) || null,
+        openingBatsman2: battingTeam.players.find(p => p.id === openingBatsman2Id) || null,
+        openingBowler: bowlingTeam.players.find(p => p.id === openingBowlerId) || null,
+        wicketKeeper: bowlingTeam.players.find(p => p.id === wicketKeeperId) || null,
+      };
+
+      onComplete(config);
+    }
   };
 
   if (loading) {
@@ -198,9 +289,8 @@ const MatchSetup = ({ onComplete, onCancel }: MatchSetupProps) => {
             {[1, 2, 3, 4, 5].map((s) => (
               <div
                 key={s}
-                className={`w-8 h-1 rounded-full ${
-                  s <= step ? 'bg-primary' : 'bg-secondary'
-                }`}
+                className={`w-8 h-1 rounded-full ${s <= step ? 'bg-primary' : 'bg-secondary'
+                  }`}
               />
             ))}
           </div>
@@ -208,10 +298,10 @@ const MatchSetup = ({ onComplete, onCancel }: MatchSetupProps) => {
         <CardDescription>
           Step {step} of 5: {
             step === 1 ? 'Select Teams' :
-            step === 2 ? 'Choose Playing XI' :
-            step === 3 ? 'Match Configuration' :
-            step === 4 ? 'Toss' :
-            'Opening Players'
+              step === 2 ? 'Choose Playing XI' :
+                step === 3 ? 'Match Configuration' :
+                  step === 4 ? 'Toss' :
+                    'Opening Players'
           }
         </CardDescription>
       </CardHeader>
@@ -287,11 +377,10 @@ const MatchSetup = ({ onComplete, onCancel }: MatchSetupProps) => {
                     <div
                       key={player.id}
                       onClick={() => togglePlayer(1, player.id)}
-                      className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-colors ${
-                        team1PlayingXI.includes(player.id)
-                          ? 'bg-primary/20 border border-primary/30'
-                          : 'bg-secondary/30 hover:bg-secondary/50'
-                      }`}
+                      className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-colors ${team1PlayingXI.includes(player.id)
+                        ? 'bg-primary/20 border border-primary/30'
+                        : 'bg-secondary/30 hover:bg-secondary/50'
+                        }`}
                     >
                       <Checkbox checked={team1PlayingXI.includes(player.id)} />
                       <div className="flex-1">
@@ -319,11 +408,10 @@ const MatchSetup = ({ onComplete, onCancel }: MatchSetupProps) => {
                     <div
                       key={player.id}
                       onClick={() => togglePlayer(2, player.id)}
-                      className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-colors ${
-                        team2PlayingXI.includes(player.id)
-                          ? 'bg-primary/20 border border-primary/30'
-                          : 'bg-secondary/30 hover:bg-secondary/50'
-                      }`}
+                      className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-colors ${team2PlayingXI.includes(player.id)
+                        ? 'bg-primary/20 border border-primary/30'
+                        : 'bg-secondary/30 hover:bg-secondary/50'
+                        }`}
                     >
                       <Checkbox checked={team2PlayingXI.includes(player.id)} />
                       <div className="flex-1">
@@ -458,7 +546,7 @@ const MatchSetup = ({ onComplete, onCancel }: MatchSetupProps) => {
             <div className="p-3 rounded-lg bg-primary/10 border border-primary/20 mb-4">
               <p className="text-sm font-medium">First Innings: {battingTeam.name} batting</p>
             </div>
-            
+
             <div className="grid md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Opening Batsman (Striker)</Label>

@@ -2,10 +2,10 @@ import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
-import { 
-  Trophy, 
-  Menu, 
-  Bell, 
+import {
+  Trophy,
+  Menu,
+  Bell,
   User,
   Sparkles,
   LogOut
@@ -34,8 +34,8 @@ export const Navbar = () => {
           {/* Logo */}
           <div className="flex items-center gap-3 cursor-pointer" onClick={() => navigate('/')}>
             <div className="relative">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[hsl(199,89%,48%)] to-[hsl(160,84%,39%)] flex items-center justify-center shadow-[0_0_40px_-10px_hsl(199,89%,48%/0.5)]">
-                <Trophy className="w-5 h-5 text-[hsl(222,47%,6%)]" />
+              <div className="w-10 h-10 rounded-xl overflow-hidden flex items-center justify-center shadow-[0_0_40px_-10px_hsl(199,89%,48%/0.5)]">
+                <img src="/logo.png" alt="SportSphere Logo" className="w-full h-full object-cover" />
               </div>
               <Sparkles className="absolute -top-1 -right-1 w-4 h-4 text-energy animate-pulse" />
             </div>

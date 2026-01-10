@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
-import { 
-  Trophy, Calendar, Users, Activity, 
+import {
+  Trophy, Calendar, Users, Activity,
   LogOut, BarChart3, Settings, Target
 } from 'lucide-react';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
@@ -31,12 +31,12 @@ const DashboardSidebar = ({ onSignOut }: DashboardSidebarProps) => {
     <>
       <aside className="hidden lg:fixed lg:inset-y-0 lg:flex lg:w-64 lg:flex-col">
         <div className="flex flex-col flex-grow bg-card/50 backdrop-blur-xl border-r border-border pt-5 pb-4 overflow-y-auto">
-          <div 
+          <div
             className="flex items-center gap-3 px-4 mb-8 cursor-pointer"
             onClick={() => navigate('/')}
           >
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-accent flex items-center justify-center">
-              <Trophy className="w-5 h-5 text-primary-foreground" />
+            <div className="w-10 h-10 rounded-xl overflow-hidden flex items-center justify-center shadow-[0_0_40px_-10px_hsl(199,89%,48%/0.5)]">
+              <img src="/logo.png" alt="SportSphere Logo" className="w-full h-full object-cover" />
             </div>
             <div>
               <h1 className="font-display font-bold">SportSphere</h1>
@@ -46,18 +46,17 @@ const DashboardSidebar = ({ onSignOut }: DashboardSidebarProps) => {
 
           <nav className="flex-1 px-2 space-y-1">
             {menuItems.map((item) => {
-              const isActive = location.pathname === item.path || 
+              const isActive = location.pathname === item.path ||
                 (item.path === '/dashboard' && location.pathname === '/dashboard');
-              
+
               return (
                 <motion.button
                   key={item.name}
                   onClick={() => navigate(item.path)}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                    isActive 
-                      ? 'bg-primary/10 text-primary' 
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${isActive
+                      ? 'bg-primary/10 text-primary'
                       : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'
-                  }`}
+                    }`}
                   whileHover={{ x: 4 }}
                   whileTap={{ scale: 0.98 }}
                 >
