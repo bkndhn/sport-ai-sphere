@@ -32,8 +32,8 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog';
 interface Player {
   id: string;
   name: string;
-  jersey_number: number | null;
-  role: string | null;
+  jersey_number?: number | null;
+  role?: string | null;
 }
 
 interface Team {
@@ -940,7 +940,7 @@ const LiveScoring = () => {
           overs: innings1Score.overs,
           balls: innings1Score.balls,
         },
-        live_state: liveState,
+        live_state: JSON.parse(JSON.stringify(liveState)),
         status: 'live' as const,
         updated_at: new Date().toISOString(),
       };

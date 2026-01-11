@@ -204,6 +204,7 @@ export type Database = {
         Row: {
           created_at: string
           id: string
+          live_state: Json | null
           match_number: number | null
           result_summary: string | null
           round: string | null
@@ -223,6 +224,7 @@ export type Database = {
         Insert: {
           created_at?: string
           id?: string
+          live_state?: Json | null
           match_number?: number | null
           result_summary?: string | null
           round?: string | null
@@ -242,6 +244,7 @@ export type Database = {
         Update: {
           created_at?: string
           id?: string
+          live_state?: Json | null
           match_number?: number | null
           result_summary?: string | null
           round?: string | null

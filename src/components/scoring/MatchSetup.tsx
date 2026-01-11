@@ -28,8 +28,8 @@ interface Team {
 interface Player {
   id: string;
   name: string;
-  jersey_number: number | null;
-  role: string | null;
+  jersey_number?: number | null;
+  role?: string | null;
 }
 
 interface MatchConfig {
