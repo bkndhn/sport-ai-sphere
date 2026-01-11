@@ -5,8 +5,8 @@ import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { 
-  Activity, Plus, Calendar, Play, Eye, Trophy
+import {
+  Activity, Plus, Calendar, Play, Eye, Trophy, Pencil
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import DashboardSidebar from '@/components/DashboardSidebar';
@@ -70,16 +70,16 @@ const Matches = () => {
       const { data, error } = await query;
 
       if (error) throw error;
-      
+
       // Filter to only show matches from user's tournaments
       const userTournaments = await supabase
         .from('tournaments')
         .select('id')
         .eq('organizer_id', user?.id);
-      
+
       const userTournamentIds = new Set(userTournaments.data?.map(t => t.id) || []);
       const userMatches = data?.filter(m => userTournamentIds.has(m.tournament_id)) || [];
-      
+
       setMatches(userMatches);
     } catch (error: any) {
       toast({
@@ -209,7 +209,7 @@ const Matches = () => {
                               • {match.tournament?.name}
                             </span>
                           </div>
-                          
+
                           {/* Teams */}
                           <div className="flex items-center gap-4">
                             <div className="flex-1 text-center lg:text-right">
@@ -242,18 +242,28 @@ const Matches = () => {
                         {/* Actions */}
                         <div className="flex gap-2">
                           {match.status === 'scheduled' && (
-                            <Button 
-                              variant="hero" 
-                              size="sm"
-                              onClick={() => navigate(`/live-scoring/${match.id}`)}
-                            >
-                              <Play className="w-4 h-4 mr-2" />
-                              Start Scoring
-                            </Button>
+                            <>
+                              <Button
+                                variant="hero"
+                                size="sm"
+                                onClick={() => navigate(`/live-scoring/${match.id}`)}
+                              >
+                                <Play className="w-4 h-4 mr-2" />
+                                Start Scoring
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => navigate(`/schedule?edit=${match.id}&tournament=${match.tournament_id}`)}
+                              >
+                                <Pencil className="w-4 h-4 mr-2" />
+                                Edit
+                              </Button>
+                            </>
                           )}
                           {match.status === 'live' && (
-                            <Button 
-                              variant="hero" 
+                            <Button
+                              variant="hero"
                               size="sm"
                               onClick={() => navigate(`/live-scoring/${match.id}`)}
                             >
@@ -261,8 +271,8 @@ const Matches = () => {
                               Continue
                             </Button>
                           )}
-                          <Button 
-                            variant="outline" 
+                          <Button
+                            variant="outline"
                             size="sm"
                             onClick={() => navigate(`/spectator/${match.id}`)}
                           >

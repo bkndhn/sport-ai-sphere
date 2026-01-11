@@ -3,24 +3,28 @@ import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import "./index.css";
 
-// Clear stale service workers and caches on startup
+// Register Service Worker for offline support
 if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.getRegistrations().then((registrations) => {
-        for (const registration of registrations) {
-            registration.unregister().then(() => {
-                console.log('ServiceWorker unregistered to clear stale cache');
-            });
-        }
-    });
-}
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js')
+            .then((registration) => {
+                console.log('[App] SW registered:', registration.scope);
 
-// Clear all caches
-if ('caches' in window) {
-    caches.keys().then((names) => {
-        for (const name of names) {
-            caches.delete(name);
-            console.log('Cache deleted:', name);
-        }
+                // Check for updates
+                registration.addEventListener('updatefound', () => {
+                    const newWorker = registration.installing;
+                    if (newWorker) {
+                        newWorker.addEventListener('statechange', () => {
+                            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                                console.log('[App] New content available, refresh to update');
+                            }
+                        });
+                    }
+                });
+            })
+            .catch((error) => {
+                console.log('[App] SW registration failed:', error);
+            });
     });
 }
 

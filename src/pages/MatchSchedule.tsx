@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
@@ -7,9 +7,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { 
-  Calendar, ArrowLeft, Plus, Clock, MapPin, 
-  ChevronLeft, ChevronRight, AlertTriangle, Wand2, Users
+import {
+  Calendar, ArrowLeft, Plus, Clock, MapPin,
+  ChevronLeft, ChevronRight, AlertTriangle, Wand2, Users, Pencil
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -68,6 +68,7 @@ const MatchSchedule = () => {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const [searchParams] = useSearchParams();
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [selectedTournament, setSelectedTournament] = useState<string>('');
   const [tournamentTeams, setTournamentTeams] = useState<TournamentTeam[]>([]);
@@ -77,6 +78,7 @@ const MatchSchedule = () => {
   const [showCreateMatch, setShowCreateMatch] = useState(false);
   const [conflicts, setConflicts] = useState<string[]>([]);
   const [generating, setGenerating] = useState(false);
+  const [editingMatchId, setEditingMatchId] = useState<string | null>(null);
 
   const [newMatch, setNewMatch] = useState({
     team1_id: '',
@@ -119,7 +121,11 @@ const MatchSchedule = () => {
 
       if (error) throw error;
       setTournaments(data || []);
-      if (data && data.length > 0) {
+
+      const tourneyId = searchParams.get('tournament');
+      if (tourneyId) {
+        setSelectedTournament(tourneyId);
+      } else if (data && data.length > 0) {
         setSelectedTournament(data[0].id);
       }
     } catch (error: any) {
@@ -157,7 +163,19 @@ const MatchSchedule = () => {
         .order('scheduled_at', { ascending: true });
 
       if (matchesError) throw matchesError;
-      setMatches(matchesData as Match[] || []);
+      const fetchedMatches = matchesData as Match[] || [];
+      setMatches(fetchedMatches);
+
+      // Handle URL-based edit trigger
+      const editId = searchParams.get('edit');
+      if (editId) {
+        const matchToEdit = fetchedMatches.find(m => m.id === editId);
+        if (matchToEdit && matchToEdit.status === 'scheduled') {
+          handleEditMatch(matchToEdit);
+          // Clean up URL
+          navigate('/schedule', { replace: true });
+        }
+      }
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Error', description: error.message });
     }
@@ -165,13 +183,13 @@ const MatchSchedule = () => {
 
   const checkConflicts = () => {
     const conflictList: string[] = [];
-    
+
     matches.forEach((match, i) => {
       if (!match.scheduled_at) return;
-      
+
       matches.forEach((otherMatch, j) => {
         if (i >= j || !otherMatch.scheduled_at) return;
-        
+
         // Check if same time
         if (match.scheduled_at === otherMatch.scheduled_at) {
           // Check if same venue
@@ -179,16 +197,16 @@ const MatchSchedule = () => {
             conflictList.push(`Venue conflict: ${match.venue} at ${format(parseISO(match.scheduled_at), 'PPp')}`);
           }
           // Check if same team
-          if (match.team1_id === otherMatch.team1_id || 
-              match.team1_id === otherMatch.team2_id ||
-              match.team2_id === otherMatch.team1_id ||
-              match.team2_id === otherMatch.team2_id) {
+          if (match.team1_id === otherMatch.team1_id ||
+            match.team1_id === otherMatch.team2_id ||
+            match.team2_id === otherMatch.team1_id ||
+            match.team2_id === otherMatch.team2_id) {
             conflictList.push(`Team conflict: Same team scheduled at ${format(parseISO(match.scheduled_at), 'PPp')}`);
           }
         }
       });
     });
-    
+
     setConflicts([...new Set(conflictList)]);
   };
 
@@ -201,34 +219,74 @@ const MatchSchedule = () => {
     }
 
     try {
-      const { data, error } = await supabase
-        .from('matches')
-        .insert({
-          tournament_id: selectedTournament,
-          team1_id: newMatch.team1_id,
-          team2_id: newMatch.team2_id,
-          scheduled_at: newMatch.scheduled_at || null,
-          venue: newMatch.venue || null,
-          round: newMatch.round || null,
-          match_number: matches.length + 1,
-          status: 'scheduled',
-        })
-        .select(`
-          *,
-          team1:teams!matches_team1_id_fkey(id, name),
-          team2:teams!matches_team2_id_fkey(id, name)
-        `)
-        .single();
+      if (editingMatchId) {
+        // Update existing match
+        const { data, error } = await supabase
+          .from('matches')
+          .update({
+            team1_id: newMatch.team1_id,
+            team2_id: newMatch.team2_id,
+            scheduled_at: newMatch.scheduled_at || null,
+            venue: newMatch.venue || null,
+            round: newMatch.round || null,
+          })
+          .eq('id', editingMatchId)
+          .select(`
+            *,
+            team1:teams!matches_team1_id_fkey(id, name),
+            team2:teams!matches_team2_id_fkey(id, name)
+          `)
+          .single();
 
-      if (error) throw error;
+        if (error) throw error;
 
-      setMatches([...matches, data as Match]);
+        setMatches(matches.map(m => m.id === editingMatchId ? (data as Match) : m));
+        toast({ title: 'Match updated!', description: 'The schedule has been updated.' });
+      } else {
+        // Create new match
+        const { data, error } = await supabase
+          .from('matches')
+          .insert({
+            tournament_id: selectedTournament,
+            team1_id: newMatch.team1_id,
+            team2_id: newMatch.team2_id,
+            scheduled_at: newMatch.scheduled_at || null,
+            venue: newMatch.venue || null,
+            round: newMatch.round || null,
+            match_number: matches.length + 1,
+            status: 'scheduled',
+          })
+          .select(`
+            *,
+            team1:teams!matches_team1_id_fkey(id, name),
+            team2:teams!matches_team2_id_fkey(id, name)
+          `)
+          .single();
+
+        if (error) throw error;
+
+        setMatches([...matches, data as Match]);
+        toast({ title: 'Match created!', description: 'The match has been scheduled.' });
+      }
+
       setShowCreateMatch(false);
+      setEditingMatchId(null);
       setNewMatch({ team1_id: '', team2_id: '', scheduled_at: '', venue: '', round: '' });
-      toast({ title: 'Match created!', description: 'The match has been scheduled.' });
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Error', description: error.message });
     }
+  };
+
+  const handleEditMatch = (match: Match) => {
+    setEditingMatchId(match.id);
+    setNewMatch({
+      team1_id: match.team1_id,
+      team2_id: match.team2_id,
+      scheduled_at: match.scheduled_at ? match.scheduled_at.slice(0, 16) : '',
+      venue: match.venue || '',
+      round: match.round || '',
+    });
+    setShowCreateMatch(true);
   };
 
   const generateFixtures = async () => {
@@ -242,7 +300,7 @@ const MatchSchedule = () => {
       const tournament = tournaments.find(t => t.id === selectedTournament);
       const teams = tournamentTeams.map(tt => tt.team);
       const newMatches: any[] = [];
-      
+
       if (tournament?.format === 'knockout') {
         // Generate knockout fixtures
         const shuffledTeams = [...teams].sort(() => Math.random() - 0.5);
@@ -315,7 +373,7 @@ const MatchSchedule = () => {
   const days = eachDayOfInterval({ start: monthStart, end: monthEnd });
 
   const getMatchesForDay = (day: Date) => {
-    return matches.filter(m => 
+    return matches.filter(m =>
       m.scheduled_at && isSameDay(parseISO(m.scheduled_at), day)
     );
   };
@@ -369,14 +427,14 @@ const MatchSchedule = () => {
               </DialogTrigger>
               <DialogContent className="bg-card border-border">
                 <DialogHeader>
-                  <DialogTitle>Schedule New Match</DialogTitle>
-                  <DialogDescription>Add a match to the tournament</DialogDescription>
+                  <DialogTitle>{editingMatchId ? 'Edit Scheduled Match' : 'Schedule New Match'}</DialogTitle>
+                  <DialogDescription>{editingMatchId ? 'Update match details' : 'Add a match to the tournament'}</DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4 pt-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>Team 1</Label>
-                      <Select value={newMatch.team1_id} onValueChange={(v) => setNewMatch({...newMatch, team1_id: v})}>
+                      <Select value={newMatch.team1_id} onValueChange={(v) => setNewMatch({ ...newMatch, team1_id: v })}>
                         <SelectTrigger className="bg-secondary/50">
                           <SelectValue placeholder="Select team" />
                         </SelectTrigger>
@@ -389,7 +447,7 @@ const MatchSchedule = () => {
                     </div>
                     <div className="space-y-2">
                       <Label>Team 2</Label>
-                      <Select value={newMatch.team2_id} onValueChange={(v) => setNewMatch({...newMatch, team2_id: v})}>
+                      <Select value={newMatch.team2_id} onValueChange={(v) => setNewMatch({ ...newMatch, team2_id: v })}>
                         <SelectTrigger className="bg-secondary/50">
                           <SelectValue placeholder="Select team" />
                         </SelectTrigger>
@@ -406,7 +464,7 @@ const MatchSchedule = () => {
                     <Input
                       type="datetime-local"
                       value={newMatch.scheduled_at}
-                      onChange={(e) => setNewMatch({...newMatch, scheduled_at: e.target.value})}
+                      onChange={(e) => setNewMatch({ ...newMatch, scheduled_at: e.target.value })}
                       className="bg-secondary/50"
                     />
                   </div>
@@ -416,7 +474,7 @@ const MatchSchedule = () => {
                       <Input
                         placeholder="Stadium name"
                         value={newMatch.venue}
-                        onChange={(e) => setNewMatch({...newMatch, venue: e.target.value})}
+                        onChange={(e) => setNewMatch({ ...newMatch, venue: e.target.value })}
                         className="bg-secondary/50"
                       />
                     </div>
@@ -425,13 +483,13 @@ const MatchSchedule = () => {
                       <Input
                         placeholder="e.g., Semi-final"
                         value={newMatch.round}
-                        onChange={(e) => setNewMatch({...newMatch, round: e.target.value})}
+                        onChange={(e) => setNewMatch({ ...newMatch, round: e.target.value })}
                         className="bg-secondary/50"
                       />
                     </div>
                   </div>
                   <Button variant="hero" className="w-full" onClick={createMatch}>
-                    Schedule Match
+                    {editingMatchId ? 'Update Match' : 'Schedule Match'}
                   </Button>
                 </div>
               </DialogContent>
@@ -509,17 +567,16 @@ const MatchSchedule = () => {
                       const dayMatches = getMatchesForDay(day);
                       const hasMatches = dayMatches.length > 0;
                       const isToday = isSameDay(day, new Date());
-                      
+
                       return (
                         <motion.div
                           key={day.toISOString()}
-                          className={`aspect-square p-1 rounded-lg border transition-colors cursor-pointer ${
-                            isToday 
-                              ? 'border-primary bg-primary/10' 
-                              : hasMatches 
-                              ? 'border-accent/50 bg-accent/10' 
+                          className={`aspect-square p-1 rounded-lg border transition-colors cursor-pointer ${isToday
+                            ? 'border-primary bg-primary/10'
+                            : hasMatches
+                              ? 'border-accent/50 bg-accent/10'
                               : 'border-border/50 hover:border-border'
-                          }`}
+                            }`}
                           whileHover={{ scale: 1.05 }}
                         >
                           <div className="h-full flex flex-col">
@@ -583,14 +640,24 @@ const MatchSchedule = () => {
                             <span className="text-xs text-muted-foreground">
                               {match.round || `Match ${match.match_number}`}
                             </span>
-                            <Button 
-                              variant="ghost" 
-                              size="sm" 
-                              className="h-6 w-6 p-0 text-destructive hover:text-destructive"
-                              onClick={() => deleteMatch(match.id)}
-                            >
-                              ×
-                            </Button>
+                            <div className="flex items-center gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 w-6 p-0 text-muted-foreground hover:text-primary"
+                                onClick={() => handleEditMatch(match)}
+                              >
+                                <Pencil className="w-3 h-3" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 w-6 p-0 text-destructive hover:text-destructive"
+                                onClick={() => deleteMatch(match.id)}
+                              >
+                                ×
+                              </Button>
+                            </div>
                           </div>
                           <p className="font-medium text-sm">
                             {match.team1?.name || 'TBD'} vs {match.team2?.name || 'TBD'}

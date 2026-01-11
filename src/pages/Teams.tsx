@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { 
+import {
   Users, Plus, ArrowLeft, Trash2, Edit2, UserPlus,
   Trophy, Target, Dribbble, CircleDot, Volleyball, Swords, Gamepad2,
   Upload, ArrowRightLeft, Camera
@@ -71,6 +71,124 @@ const playerRoles = ['Batsman', 'Bowler', 'All-Rounder', 'Wicket-Keeper', 'Capta
 const battingStyles = ['Right-handed', 'Left-handed'];
 const bowlingStyles = ['Right-arm Fast', 'Right-arm Medium', 'Right-arm Spin', 'Left-arm Fast', 'Left-arm Medium', 'Left-arm Spin'];
 
+// PlayerForm as a standalone component to prevent focus loss
+interface PlayerFormProps {
+  newPlayer: { name: string; jersey_number: string; role: string; batting_style: string; bowling_style: string };
+  setNewPlayer: React.Dispatch<React.SetStateAction<{ name: string; jersey_number: string; role: string; batting_style: string; bowling_style: string }>>;
+  playerImagePreview: string | null;
+  selectedTeamSport: string;
+  fileInputRef: React.RefObject<HTMLInputElement>;
+  handleImageChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onSubmit: () => void;
+  submitLabel: string;
+  uploadingImage: boolean;
+}
+
+const PlayerForm = ({
+  newPlayer,
+  setNewPlayer,
+  playerImagePreview,
+  selectedTeamSport,
+  fileInputRef,
+  handleImageChange,
+  onSubmit,
+  submitLabel,
+  uploadingImage
+}: PlayerFormProps) => (
+  <div className="space-y-4 pt-4">
+    {/* Image Upload */}
+    <div className="flex justify-center">
+      <div className="relative">
+        <div
+          className="w-24 h-24 rounded-full bg-secondary/50 flex items-center justify-center overflow-hidden border-2 border-dashed border-muted-foreground/30 cursor-pointer hover:border-primary transition-colors"
+          onClick={() => fileInputRef.current?.click()}
+        >
+          {playerImagePreview ? (
+            <img src={playerImagePreview} alt="Player" className="w-full h-full object-cover" />
+          ) : (
+            <Camera className="w-8 h-8 text-muted-foreground" />
+          )}
+        </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={handleImageChange}
+        />
+      </div>
+    </div>
+
+    <div className="space-y-2">
+      <Label>Player Name *</Label>
+      <Input
+        placeholder="Enter player name"
+        value={newPlayer.name}
+        onChange={(e) => setNewPlayer(prev => ({ ...prev, name: e.target.value }))}
+        className="bg-secondary/50"
+      />
+    </div>
+    <div className="grid grid-cols-2 gap-4">
+      <div className="space-y-2">
+        <Label>Jersey Number</Label>
+        <Input
+          type="number"
+          placeholder="99"
+          value={newPlayer.jersey_number}
+          onChange={(e) => setNewPlayer(prev => ({ ...prev, jersey_number: e.target.value }))}
+          className="bg-secondary/50"
+        />
+      </div>
+      <div className="space-y-2">
+        <Label>Role</Label>
+        <Select value={newPlayer.role} onValueChange={(v) => setNewPlayer(prev => ({ ...prev, role: v }))}>
+          <SelectTrigger className="bg-secondary/50">
+            <SelectValue placeholder="Select role" />
+          </SelectTrigger>
+          <SelectContent>
+            {playerRoles.map(role => (
+              <SelectItem key={role} value={role}>{role}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+    </div>
+    {selectedTeamSport === 'cricket' && (
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label>Batting Style</Label>
+          <Select value={newPlayer.batting_style} onValueChange={(v) => setNewPlayer(prev => ({ ...prev, batting_style: v }))}>
+            <SelectTrigger className="bg-secondary/50">
+              <SelectValue placeholder="Select" />
+            </SelectTrigger>
+            <SelectContent>
+              {battingStyles.map(style => (
+                <SelectItem key={style} value={style}>{style}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-2">
+          <Label>Bowling Style</Label>
+          <Select value={newPlayer.bowling_style} onValueChange={(v) => setNewPlayer(prev => ({ ...prev, bowling_style: v }))}>
+            <SelectTrigger className="bg-secondary/50">
+              <SelectValue placeholder="Select" />
+            </SelectTrigger>
+            <SelectContent>
+              {bowlingStyles.map(style => (
+                <SelectItem key={style} value={style}>{style}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+    )}
+    <Button variant="hero" className="w-full" onClick={onSubmit} disabled={uploadingImage}>
+      {uploadingImage ? 'Uploading...' : submitLabel}
+    </Button>
+  </div>
+);
+
 const Teams = () => {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
@@ -98,6 +216,13 @@ const Teams = () => {
   const [playerImagePreview, setPlayerImagePreview] = useState<string | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [targetTeamId, setTargetTeamId] = useState('');
+
+  // Bulk player add
+  const [showBulkAdd, setShowBulkAdd] = useState(false);
+  const [bulkPlayers, setBulkPlayers] = useState<{ name: string; jersey_number: string; role: string }[]>([
+    { name: '', jersey_number: '', role: '' }
+  ]);
+  const [addingBulkPlayers, setAddingBulkPlayers] = useState(false);
 
   // Confirmation dialogs
   const [confirmDeleteTeam, setConfirmDeleteTeam] = useState<{ open: boolean; teamId: string | null }>({ open: false, teamId: null });
@@ -179,7 +304,7 @@ const Teams = () => {
   const deleteTeam = async () => {
     if (!confirmDeleteTeam.teamId) return;
     const teamId = confirmDeleteTeam.teamId;
-    
+
     try {
       const { error } = await supabase
         .from('teams')
@@ -223,10 +348,24 @@ const Teams = () => {
   const addPlayer = async () => {
     if (!selectedTeam || !newPlayer.name.trim()) return;
 
+    // Check for duplicate name in the same team
+    const playerNameLower = newPlayer.name.trim().toLowerCase();
+    const existingPlayer = selectedTeam.players?.find(
+      p => p.name.toLowerCase() === playerNameLower
+    );
+    if (existingPlayer) {
+      toast({
+        variant: 'destructive',
+        title: 'Duplicate player name',
+        description: `A player named "${existingPlayer.name}" already exists in this team.`,
+      });
+      return;
+    }
+
     try {
       setUploadingImage(true);
       let imageUrl = null;
-      
+
       if (playerImage) {
         imageUrl = await uploadPlayerImage(playerImage);
       }
@@ -253,8 +392,8 @@ const Teams = () => {
         team_id: selectedTeam.id,
       });
 
-      setTeams(teams.map(t => 
-        t.id === selectedTeam.id 
+      setTeams(teams.map(t =>
+        t.id === selectedTeam.id
           ? { ...t, players: [...(t.players || []), data] }
           : t
       ));
@@ -279,7 +418,7 @@ const Teams = () => {
     try {
       setUploadingImage(true);
       let imageUrl = editingPlayer.image_url;
-      
+
       if (playerImage) {
         imageUrl = await uploadPlayerImage(playerImage);
       }
@@ -304,9 +443,9 @@ const Teams = () => {
         ...t,
         players: t.players?.map(p => p.id === editingPlayer.id ? data : p)
       })));
-      setSelectedTeam(prev => prev ? { 
-        ...prev, 
-        players: prev.players?.map(p => p.id === editingPlayer.id ? data : p) 
+      setSelectedTeam(prev => prev ? {
+        ...prev,
+        players: prev.players?.map(p => p.id === editingPlayer.id ? data : p)
       } : null);
       setShowEditPlayer(false);
       setEditingPlayer(null);
@@ -393,11 +532,11 @@ const Teams = () => {
         return t;
       }));
       setSelectedTeam(prev => prev ? { ...prev, players: prev.players?.filter(p => p.id !== player.id) } : null);
-      
+
       setShowTransferPlayer(false);
       setTransferringPlayer(null);
       setTargetTeamId('');
-      
+
       const targetTeam = allTeams.find(t => t.id === targetTeamId);
       toast({ title: 'Player transferred!', description: `${player.name} has been transferred to ${targetTeam?.name || 'the new team'}.` });
     } catch (error: any) {
@@ -413,6 +552,120 @@ const Teams = () => {
     setNewPlayer({ name: '', jersey_number: '', role: '', batting_style: '', bowling_style: '' });
     setPlayerImage(null);
     setPlayerImagePreview(null);
+  };
+
+  // Bulk player functions
+  const addBulkPlayerRow = () => {
+    setBulkPlayers([...bulkPlayers, { name: '', jersey_number: '', role: '' }]);
+  };
+
+  const removeBulkPlayerRow = (index: number) => {
+    if (bulkPlayers.length > 1) {
+      setBulkPlayers(bulkPlayers.filter((_, i) => i !== index));
+    }
+  };
+
+  const updateBulkPlayer = (index: number, field: string, value: string) => {
+    setBulkPlayers(bulkPlayers.map((p, i) =>
+      i === index ? { ...p, [field]: value } : p
+    ));
+  };
+
+  const resetBulkPlayerForm = () => {
+    setBulkPlayers([{ name: '', jersey_number: '', role: '' }]);
+  };
+
+  const addBulkPlayers = async () => {
+    if (!selectedTeam) return;
+
+    const validPlayers = bulkPlayers.filter(p => p.name.trim());
+    if (validPlayers.length === 0) {
+      toast({
+        variant: 'destructive',
+        title: 'No players to add',
+        description: 'Please enter at least one player name.',
+      });
+      return;
+    }
+
+    // Check for duplicates with existing team players
+    const existingNames = new Set(
+      (selectedTeam.players || []).map(p => p.name.toLowerCase())
+    );
+    const duplicates = validPlayers.filter(p => existingNames.has(p.name.trim().toLowerCase()));
+
+    if (duplicates.length > 0) {
+      toast({
+        variant: 'destructive',
+        title: 'Duplicate player names',
+        description: `These players already exist: ${duplicates.map(p => p.name).join(', ')}`,
+      });
+      return;
+    }
+
+    // Check for duplicates within the bulk list itself
+    const bulkNames = validPlayers.map(p => p.name.trim().toLowerCase());
+    const hasBulkDuplicates = bulkNames.length !== new Set(bulkNames).size;
+    if (hasBulkDuplicates) {
+      toast({
+        variant: 'destructive',
+        title: 'Duplicate names in list',
+        description: 'You have entered the same name more than once.',
+      });
+      return;
+    }
+
+    try {
+      setAddingBulkPlayers(true);
+
+      // Insert all players
+      const playersToInsert = validPlayers.map(p => ({
+        name: p.name.trim(),
+        jersey_number: p.jersey_number ? parseInt(p.jersey_number) : null,
+        role: p.role || null,
+        team_id: selectedTeam.id,
+      }));
+
+      const { data, error } = await supabase
+        .from('players')
+        .insert(playersToInsert)
+        .select();
+
+      if (error) throw error;
+
+      // Add to player_team_history
+      if (data) {
+        await Promise.all(data.map(player =>
+          supabase.from('player_team_history').insert({
+            player_id: player.id,
+            team_id: selectedTeam.id,
+          })
+        ));
+      }
+
+      // Update local state
+      setTeams(teams.map(t =>
+        t.id === selectedTeam.id
+          ? { ...t, players: [...(t.players || []), ...(data || [])] }
+          : t
+      ));
+      setSelectedTeam(prev => prev ? { ...prev, players: [...(prev.players || []), ...(data || [])] } : null);
+
+      setShowBulkAdd(false);
+      resetBulkPlayerForm();
+      toast({
+        title: `${data?.length || 0} players added!`,
+        description: `Players have been added to ${selectedTeam.name}.`
+      });
+    } catch (error: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Error adding players',
+        description: error.message,
+      });
+    } finally {
+      setAddingBulkPlayers(false);
+    }
   };
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -452,101 +705,6 @@ const Teams = () => {
       </div>
     );
   }
-
-  const PlayerForm = ({ onSubmit, submitLabel }: { onSubmit: () => void; submitLabel: string }) => (
-    <div className="space-y-4 pt-4">
-      {/* Image Upload */}
-      <div className="flex justify-center">
-        <div className="relative">
-          <div 
-            className="w-24 h-24 rounded-full bg-secondary/50 flex items-center justify-center overflow-hidden border-2 border-dashed border-muted-foreground/30 cursor-pointer hover:border-primary transition-colors"
-            onClick={() => fileInputRef.current?.click()}
-          >
-            {playerImagePreview ? (
-              <img src={playerImagePreview} alt="Player" className="w-full h-full object-cover" />
-            ) : (
-              <Camera className="w-8 h-8 text-muted-foreground" />
-            )}
-          </div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={handleImageChange}
-          />
-        </div>
-      </div>
-      
-      <div className="space-y-2">
-        <Label>Player Name *</Label>
-        <Input
-          placeholder="Enter player name"
-          value={newPlayer.name}
-          onChange={(e) => setNewPlayer({ ...newPlayer, name: e.target.value })}
-          className="bg-secondary/50"
-        />
-      </div>
-      <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <Label>Jersey Number</Label>
-          <Input
-            type="number"
-            placeholder="99"
-            value={newPlayer.jersey_number}
-            onChange={(e) => setNewPlayer({ ...newPlayer, jersey_number: e.target.value })}
-            className="bg-secondary/50"
-          />
-        </div>
-        <div className="space-y-2">
-          <Label>Role</Label>
-          <Select value={newPlayer.role} onValueChange={(v) => setNewPlayer({ ...newPlayer, role: v })}>
-            <SelectTrigger className="bg-secondary/50">
-              <SelectValue placeholder="Select role" />
-            </SelectTrigger>
-            <SelectContent>
-              {playerRoles.map(role => (
-                <SelectItem key={role} value={role}>{role}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-      {selectedTeam?.sport === 'cricket' && (
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label>Batting Style</Label>
-            <Select value={newPlayer.batting_style} onValueChange={(v) => setNewPlayer({ ...newPlayer, batting_style: v })}>
-              <SelectTrigger className="bg-secondary/50">
-                <SelectValue placeholder="Select" />
-              </SelectTrigger>
-              <SelectContent>
-                {battingStyles.map(style => (
-                  <SelectItem key={style} value={style}>{style}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label>Bowling Style</Label>
-            <Select value={newPlayer.bowling_style} onValueChange={(v) => setNewPlayer({ ...newPlayer, bowling_style: v })}>
-              <SelectTrigger className="bg-secondary/50">
-                <SelectValue placeholder="Select" />
-              </SelectTrigger>
-              <SelectContent>
-                {bowlingStyles.map(style => (
-                  <SelectItem key={style} value={style}>{style}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-      )}
-      <Button variant="hero" className="w-full" onClick={onSubmit} disabled={uploadingImage}>
-        {uploadingImage ? 'Uploading...' : submitLabel}
-      </Button>
-    </div>
-  );
 
   return (
     <div className="min-h-screen bg-gradient-dark py-8 px-4">
@@ -638,18 +796,16 @@ const Teams = () => {
                         <motion.button
                           key={team.id}
                           onClick={() => setSelectedTeam(team)}
-                          className={`w-full p-4 rounded-xl text-left transition-all ${
-                            selectedTeam?.id === team.id
-                              ? 'bg-primary/10 border border-primary/30'
-                              : 'bg-secondary/30 hover:bg-secondary/50'
-                          }`}
+                          className={`w-full p-4 rounded-xl text-left transition-all ${selectedTeam?.id === team.id
+                            ? 'bg-primary/10 border border-primary/30'
+                            : 'bg-secondary/30 hover:bg-secondary/50'
+                            }`}
                           whileHover={{ scale: 1.02 }}
                           whileTap={{ scale: 0.98 }}
                         >
                           <div className="flex items-center gap-3">
-                            <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                              selectedTeam?.id === team.id ? 'bg-primary/20' : 'bg-secondary'
-                            }`}>
+                            <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${selectedTeam?.id === team.id ? 'bg-primary/20' : 'bg-secondary'
+                              }`}>
                               <SportIcon className={`w-5 h-5 ${selectedTeam?.id === team.id ? 'text-primary' : 'text-muted-foreground'}`} />
                             </div>
                             <div className="flex-1 min-w-0">
@@ -694,11 +850,29 @@ const Teams = () => {
                             <DialogTitle>Add Player to {selectedTeam.name}</DialogTitle>
                             <DialogDescription>Enter player details</DialogDescription>
                           </DialogHeader>
-                          <PlayerForm onSubmit={addPlayer} submitLabel="Add Player" />
+                          <PlayerForm
+                            newPlayer={newPlayer}
+                            setNewPlayer={setNewPlayer}
+                            playerImagePreview={playerImagePreview}
+                            selectedTeamSport={selectedTeam?.sport || 'cricket'}
+                            fileInputRef={fileInputRef}
+                            handleImageChange={handleImageChange}
+                            onSubmit={addPlayer}
+                            submitLabel="Add Player"
+                            uploadingImage={uploadingImage}
+                          />
                         </DialogContent>
                       </Dialog>
-                      <Button 
-                        variant="ghost" 
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setShowBulkAdd(true)}
+                      >
+                        <Users className="w-4 h-4 mr-2" />
+                        Bulk Add
+                      </Button>
+                      <Button
+                        variant="ghost"
                         size="sm"
                         className="text-destructive hover:text-destructive"
                         onClick={() => setConfirmDeleteTeam({ open: true, teamId: selectedTeam.id })}
@@ -720,43 +894,51 @@ const Teams = () => {
                           className="flex items-center justify-between p-4 rounded-xl bg-secondary/30 hover:bg-secondary/50 transition-colors"
                         >
                           <div className="flex items-center gap-4">
-                            <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center overflow-hidden">
+                            <div className={`w-12 h-12 rounded-xl flex items-center justify-center overflow-hidden ${player.role === 'Captain' ? 'bg-yellow-500/20 ring-2 ring-yellow-500/50' : 'bg-primary/10'
+                              }`}>
                               {player.image_url ? (
                                 <img src={player.image_url} alt={player.name} className="w-full h-full object-cover" />
                               ) : (
-                                <span className="font-display font-bold text-primary">
+                                <span className={`font-display font-bold ${player.role === 'Captain' ? 'text-yellow-500' : 'text-primary'}`}>
                                   {player.jersey_number || '?'}
                                 </span>
                               )}
                             </div>
                             <div>
-                              <p className="font-medium">{player.name}</p>
+                              <p className="font-medium flex items-center gap-2">
+                                {player.name}
+                                {player.role === 'Captain' && (
+                                  <span className="text-yellow-500 text-xs font-bold px-2 py-0.5 rounded-full bg-yellow-500/20">
+                                    👑 Captain
+                                  </span>
+                                )}
+                              </p>
                               <p className="text-sm text-muted-foreground">
-                                {player.role || 'Player'}
+                                {player.role && player.role !== 'Captain' ? player.role : 'Player'}
                                 {player.batting_style && ` • ${player.batting_style}`}
                               </p>
                             </div>
                           </div>
                           <div className="flex items-center gap-1">
-                            <Button 
-                              variant="ghost" 
-                              size="sm" 
+                            <Button
+                              variant="ghost"
+                              size="sm"
                               onClick={() => openEditPlayer(player)}
                             >
                               <Edit2 className="w-4 h-4" />
                             </Button>
-                            <Button 
-                              variant="ghost" 
+                            <Button
+                              variant="ghost"
                               size="sm"
                               onClick={() => openTransferPlayer(player)}
                               disabled={allTeams.length < 2}
                             >
                               <ArrowRightLeft className="w-4 h-4" />
                             </Button>
-                            <Button 
-                              variant="ghost" 
-                              size="sm" 
-                              className="text-destructive hover:text-destructive" 
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-destructive hover:text-destructive"
                               onClick={() => setConfirmDeletePlayer({ open: true, playerId: player.id })}
                             >
                               <Trash2 className="w-4 h-4" />
@@ -803,7 +985,17 @@ const Teams = () => {
             <DialogTitle>Edit Player</DialogTitle>
             <DialogDescription>Update player details</DialogDescription>
           </DialogHeader>
-          <PlayerForm onSubmit={updatePlayer} submitLabel="Update Player" />
+          <PlayerForm
+            newPlayer={newPlayer}
+            setNewPlayer={setNewPlayer}
+            playerImagePreview={playerImagePreview}
+            selectedTeamSport={selectedTeam?.sport || 'cricket'}
+            fileInputRef={fileInputRef}
+            handleImageChange={handleImageChange}
+            onSubmit={updatePlayer}
+            submitLabel="Update Player"
+            uploadingImage={uploadingImage}
+          />
         </DialogContent>
       </Dialog>
 
@@ -839,6 +1031,72 @@ const Teams = () => {
             <Button variant="hero" className="w-full" onClick={transferPlayer} disabled={!targetTeamId}>
               <ArrowRightLeft className="w-4 h-4 mr-2" />
               Transfer Player
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Add Players Dialog */}
+      <Dialog open={showBulkAdd} onOpenChange={(open) => {
+        setShowBulkAdd(open);
+        if (!open) resetBulkPlayerForm();
+      }}>
+        <DialogContent className="bg-card border-border max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Add Multiple Players to {selectedTeam?.name}</DialogTitle>
+            <DialogDescription>Add multiple players at once. Fill in names and optionally jersey numbers.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 max-h-80 overflow-y-auto">
+            {bulkPlayers.map((player, idx) => (
+              <div key={idx} className="flex items-center gap-2 p-2 rounded-lg bg-secondary/30">
+                <span className="text-xs text-muted-foreground w-6">{idx + 1}.</span>
+                <Input
+                  placeholder="Player name *"
+                  value={player.name}
+                  onChange={(e) => updateBulkPlayer(idx, 'name', e.target.value)}
+                  className="flex-1 h-9"
+                />
+                <Input
+                  type="number"
+                  placeholder="#"
+                  value={player.jersey_number}
+                  onChange={(e) => updateBulkPlayer(idx, 'jersey_number', e.target.value)}
+                  className="w-16 h-9"
+                />
+                <Select value={player.role} onValueChange={(v) => updateBulkPlayer(idx, 'role', v)}>
+                  <SelectTrigger className="w-28 h-9">
+                    <SelectValue placeholder="Role" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {playerRoles.map(role => (
+                      <SelectItem key={role} value={role}>{role}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => removeBulkPlayerRow(idx)}
+                  disabled={bulkPlayers.length === 1}
+                  className="h-9 w-9 p-0 text-destructive hover:text-destructive"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </Button>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={addBulkPlayerRow} className="flex-1">
+              <Plus className="w-4 h-4 mr-2" />
+              Add Row
+            </Button>
+            <Button
+              variant="hero"
+              onClick={addBulkPlayers}
+              disabled={addingBulkPlayers || bulkPlayers.every(p => !p.name.trim())}
+              className="flex-1"
+            >
+              {addingBulkPlayers ? 'Adding...' : `Add ${bulkPlayers.filter(p => p.name.trim()).length} Players`}
             </Button>
           </div>
         </DialogContent>

@@ -1,13 +1,13 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
   Activity, ArrowLeft, RotateCcw, Target, Mic, RefreshCw, AlertTriangle,
-  Users, ChevronDown, ChevronUp
+  Users, ChevronDown, ChevronUp, Share2, FileDown
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -17,6 +17,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import MatchSetup from '@/components/scoring/MatchSetup';
 import DismissalDialog, { DismissalDetails } from '@/components/scoring/DismissalDialog';
 import MatchSummary from '@/components/scoring/MatchSummary';
@@ -118,6 +125,8 @@ const LiveScoring = () => {
   const { user, loading: authLoading } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
+  const { matchId: urlMatchId } = useParams<{ matchId: string }>();
+  const [loadingMatch, setLoadingMatch] = useState(false);
 
   // Match state
   const [matchConfig, setMatchConfig] = useState<MatchConfig | null>(null);
@@ -163,6 +172,24 @@ const LiveScoring = () => {
   const [showNewBatterSelect, setShowNewBatterSelect] = useState(false);
   const [showLiveSummary, setShowLiveSummary] = useState(false);
 
+  // Player change dialogs
+  const [showChangeStriker, setShowChangeStriker] = useState(false);
+  const [showChangeNonStriker, setShowChangeNonStriker] = useState(false);
+  const [showChangeBowler, setShowChangeBowler] = useState(false);
+
+  // Powerplay tracking (for T20: 1-6 powerplay, 7-16 middle, 17-20 death)
+  const [powerplayType, setPowerplayType] = useState<'powerplay' | 'middle' | 'death' | 'none'>('powerplay');
+
+  // Min bowlers rule
+  const [minBowlersRequired, setMinBowlersRequired] = useState<number>(5);
+
+  // Manhattan chart data (runs per over)
+  const [innings1RunsPerOver, setInnings1RunsPerOver] = useState<number[]>([]);
+  const [innings2RunsPerOver, setInnings2RunsPerOver] = useState<number[]>([]);
+
+  // Wagon wheel data (direction and runs per shot)
+  const [wagonWheelData, setWagonWheelData] = useState<{ angle: number; runs: number; batter: string }[]>([]);
+
   // Confirmation dialogs
   const [showUndoConfirm, setShowUndoConfirm] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
@@ -176,6 +203,138 @@ const LiveScoring = () => {
       navigate('/auth');
     }
   }, [user, authLoading, navigate]);
+
+  // Load match data when navigating from "Continue Scoring"
+  useEffect(() => {
+    if (!urlMatchId || !user) return;
+
+    const loadMatchData = async () => {
+      setLoadingMatch(true);
+      try {
+        // First, fetch match basic data
+        const { data: matchData, error: matchError } = await supabase
+          .from('matches')
+          .select('*')
+          .eq('id', urlMatchId)
+          .single();
+
+        if (matchError || !matchData) {
+          console.error('Match load error:', matchError);
+          toast({ variant: 'destructive', title: 'Match not found', description: 'Starting new match setup' });
+          return;
+        }
+
+        // Check if match has team IDs
+        if (!matchData.team1_id || !matchData.team2_id) {
+          console.log('Match has no team IDs, cannot resume');
+          toast({
+            variant: 'destructive',
+            title: 'Cannot resume match',
+            description: 'This match was not saved with team data. Starting new match setup.'
+          });
+          return;
+        }
+
+        // Fetch teams separately
+        const { data: team1Data, error: team1Error } = await supabase
+          .from('teams')
+          .select('*, players(*)')
+          .eq('id', matchData.team1_id)
+          .single();
+
+        const { data: team2Data, error: team2Error } = await supabase
+          .from('teams')
+          .select('*, players(*)')
+          .eq('id', matchData.team2_id)
+          .single();
+
+        if (team1Error || team2Error || !team1Data || !team2Data) {
+          console.error('Team load error:', team1Error, team2Error);
+          toast({ variant: 'destructive', title: 'Error loading teams' });
+          return;
+        }
+
+        const team1: Team = {
+          id: team1Data.id,
+          name: team1Data.name,
+          players: team1Data.players || [],
+        };
+        const team2: Team = {
+          id: team2Data.id,
+          name: team2Data.name,
+          players: team2Data.players || [],
+        };
+
+        // Load stored score data if available
+        const innings1 = matchData.innings1_score as any;
+        const innings2 = matchData.innings2_score as any;
+
+        if (innings1) {
+          setInnings1Score({
+            runs: innings1.runs || 0,
+            wickets: innings1.wickets || 0,
+            overs: innings1.overs || 0,
+            balls: innings1.balls || 0,
+          });
+        }
+
+        if (innings2) {
+          setInnings2Score({
+            runs: innings2.runs || 0,
+            wickets: innings2.wickets || 0,
+            overs: innings2.overs || 0,
+            balls: innings2.balls || 0,
+          });
+          if (innings2.runs > 0 || innings2.wickets > 0) {
+            setCurrentInnings(2);
+          }
+        }
+
+        // Determine batting/bowling teams based on toss
+        const tossWinner = matchData.toss_winner_id === team1.id ? 'team1' : 'team2';
+        const tossDecision = matchData.toss_decision || 'bat';
+        const battingTeam = tossDecision === 'bat'
+          ? (tossWinner === 'team1' ? team1 : team2)
+          : (tossWinner === 'team1' ? team2 : team1);
+        const bowlingTeam = battingTeam.id === team1.id ? team2 : team1;
+
+        setMatchConfig({
+          team1,
+          team2,
+          team1PlayingXI: team1.players,
+          team2PlayingXI: team2.players,
+          totalOvers: 20, // Default, could be loaded from tournament
+          maxOversPerBowler: null,
+          tossWinner: tossWinner as 'team1' | 'team2',
+          tossDecision: tossDecision as 'bat' | 'bowl',
+          battingTeam,
+          bowlingTeam,
+          openingBatsman1: null,
+          openingBatsman2: null,
+          openingBowler: null,
+          wicketKeeper: null,
+        });
+
+        setMatchId(urlMatchId);
+        setShowSetup(false);
+        setShowNewBatterSelect(true);
+        setShowBowlerSelect(true);
+
+        toast({
+          title: 'Match Resumed',
+          description: `${team1.name} vs ${team2.name} - Select openers to continue`,
+        });
+      } catch (err) {
+        console.error('Error loading match:', err);
+        toast({ variant: 'destructive', title: 'Error loading match' });
+      } finally {
+        setLoadingMatch(false);
+      }
+    };
+
+    loadMatchData();
+  }, [urlMatchId, user]);
+
 
   const currentScore = currentInnings === 1 ? innings1Score : innings2Score;
   const setCurrentScore = currentInnings === 1 ? setInnings1Score : setInnings2Score;
@@ -275,6 +434,226 @@ const LiveScoring = () => {
       player.id !== striker?.id &&
       player.id !== nonStriker?.id
     );
+  };
+
+  // ========== ADVANCED STATS CALCULATIONS ==========
+
+  // Calculate Current Run Rate
+  const calculateCRR = (): number => {
+    const totalOvers = currentScore.overs + currentScore.balls / 6;
+    if (totalOvers === 0) return 0;
+    return parseFloat((currentScore.runs / totalOvers).toFixed(2));
+  };
+
+  // Calculate Required Run Rate (for 2nd innings)
+  const calculateRRR = (): number | null => {
+    if (currentInnings !== 2 || !matchConfig) return null;
+    const target = innings1Score.runs + 1;
+    const runsNeeded = target - currentScore.runs;
+    const oversRemaining = matchConfig.totalOvers - currentScore.overs - currentScore.balls / 6;
+    if (oversRemaining <= 0) return null;
+    return parseFloat((runsNeeded / oversRemaining).toFixed(2));
+  };
+
+  // Calculate Win Probability using simple factors
+  const calculateWinProbability = (): { batting: number; bowling: number } => {
+    if (!matchConfig) return { batting: 50, bowling: 50 };
+
+    if (currentInnings === 1) {
+      // First innings - probability based on score and overs
+      const projectedScore = calculateCRR() * matchConfig.totalOvers;
+      const wicketFactor = (10 - currentScore.wickets) / 10;
+      const battingProb = Math.min(75, 30 + (projectedScore / 3) * wicketFactor);
+      return { batting: Math.round(battingProb), bowling: Math.round(100 - battingProb) };
+    } else {
+      // Second innings - based on RRR vs CRR and wickets
+      const rrr = calculateRRR();
+      const crr = calculateCRR();
+      if (!rrr) return { batting: 50, bowling: 50 };
+
+      const runsNeeded = innings1Score.runs + 1 - currentScore.runs;
+      const wicketsLeft = 10 - currentScore.wickets;
+      const ballsLeft = (matchConfig.totalOvers * 6) - (currentScore.overs * 6 + currentScore.balls);
+
+      // Simple probability formula
+      let battingProb = 50;
+
+      // RRR vs CRR comparison (-20 to +20)
+      if (crr > 0) {
+        const rrrRatio = rrr / crr;
+        battingProb += (1 - rrrRatio) * 30;
+      }
+
+      // Wickets in hand bonus (0 to +20)
+      battingProb += (wicketsLeft / 10) * 20;
+
+      // If runs needed is very high
+      if (runsNeeded > ballsLeft * 2) battingProb -= 30;
+
+      // Clamp between 5 and 95
+      battingProb = Math.max(5, Math.min(95, battingProb));
+
+      return { batting: Math.round(battingProb), bowling: Math.round(100 - battingProb) };
+    }
+  };
+
+  // Determine current powerplay phase
+  const getCurrentPowerplay = (): 'powerplay' | 'middle' | 'death' | 'none' => {
+    if (!matchConfig) return 'none';
+    const totalOvers = matchConfig.totalOvers;
+    const currentOver = currentScore.overs + 1;
+
+    if (totalOvers === 20) {
+      // T20 format
+      if (currentOver <= 6) return 'powerplay';
+      if (currentOver <= 15) return 'middle';
+      return 'death';
+    } else if (totalOvers === 50) {
+      // ODI format
+      if (currentOver <= 10) return 'powerplay';
+      if (currentOver <= 40) return 'middle';
+      return 'death';
+    }
+    return 'none';
+  };
+
+  // Update powerplay on over change
+  useEffect(() => {
+    setPowerplayType(getCurrentPowerplay());
+  }, [currentScore.overs, matchConfig]);
+
+  // Get unique bowlers count
+  const getUniqueBowlersCount = (): number => {
+    return usedBowlers.size;
+  };
+
+  // Swap striker and non-striker
+  const swapBatsmen = () => {
+    const temp = striker;
+    setStriker(nonStriker);
+    setNonStriker(temp);
+    toast({
+      title: 'Batsmen Swapped',
+      description: `${nonStriker?.name} is now on strike`,
+    });
+  };
+
+  // Change striker to new batter
+  const changeStriker = (playerId: string) => {
+    const battingXI = getBattingXI();
+    const newBatter = battingXI.find(p => p.id === playerId);
+    if (newBatter) {
+      setStriker(newBatter);
+
+      // Add to batting scorecard if not exists
+      if (!battingScorecard.some(b => b.player.id === playerId)) {
+        setBattingScorecard(prev => [...prev, {
+          player: newBatter,
+          runs: 0,
+          balls: 0,
+          fours: 0,
+          sixes: 0,
+          isOut: false,
+        }]);
+      }
+
+      setShowChangeStriker(false);
+      toast({ title: 'Striker Changed', description: `${newBatter.name} is now on strike` });
+    }
+  };
+
+  // Change non-striker
+  const changeNonStriker = (playerId: string) => {
+    const battingXI = getBattingXI();
+    const newBatter = battingXI.find(p => p.id === playerId);
+    if (newBatter) {
+      setNonStriker(newBatter);
+
+      // Add to batting scorecard if not exists
+      if (!battingScorecard.some(b => b.player.id === playerId)) {
+        setBattingScorecard(prev => [...prev, {
+          player: newBatter,
+          runs: 0,
+          balls: 0,
+          fours: 0,
+          sixes: 0,
+          isOut: false,
+        }]);
+      }
+
+      setShowChangeNonStriker(false);
+      toast({ title: 'Non-Striker Changed', description: `${newBatter.name} is now at non-striker end` });
+    }
+  };
+
+  // Change bowler mid-over
+  const changeBowler = (playerId: string) => {
+    const bowlingXI = getBowlingXI();
+    const newBowler = bowlingXI.find(p => p.id === playerId);
+    if (newBowler) {
+      setCurrentBowler(newBowler);
+
+      // Add to bowling scorecard if not exists
+      if (!bowlingScorecard.some(b => b.player.id === playerId)) {
+        setBowlingScorecard(prev => [...prev, {
+          player: newBowler,
+          overs: 0,
+          balls: 0,
+          maidens: 0,
+          runs: 0,
+          wickets: 0,
+        }]);
+      }
+
+      setShowChangeBowler(false);
+      toast({ title: 'Bowler Changed', description: `${newBowler.name} is now bowling` });
+    }
+  };
+
+  // Share match function
+  const shareMatch = async () => {
+    if (!matchId || !matchConfig) {
+      toast({
+        variant: 'destructive',
+        title: 'Cannot share',
+        description: 'Match is not saved to database yet.',
+      });
+      return;
+    }
+
+    const shareUrl = `${window.location.origin}/match/${matchId}`;
+    const shareText = `🏏 Live: ${matchConfig.battingTeam.name} vs ${matchConfig.bowlingTeam.name}\n` +
+      `Score: ${currentScore.runs}/${currentScore.wickets} (${currentScore.overs}.${currentScore.balls} overs)\n` +
+      `Watch live: ${shareUrl}`;
+
+    // Try native share first (mobile)
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: 'Live Cricket Match',
+          text: shareText,
+          url: shareUrl,
+        });
+        return;
+      } catch (e) {
+        // User cancelled or share failed, fall back to clipboard
+      }
+    }
+
+    // Fallback to clipboard
+    try {
+      await navigator.clipboard.writeText(shareText);
+      toast({
+        title: '📋 Link Copied!',
+        description: 'Match link copied to clipboard. Share with friends!',
+      });
+    } catch (e) {
+      toast({
+        variant: 'destructive',
+        title: 'Could not copy',
+        description: 'Please manually copy the match link.',
+      });
+    }
   };
 
   // ========== BACKEND PERSISTENCE FUNCTIONS ==========
@@ -443,6 +822,106 @@ const LiveScoring = () => {
     }
   };
 
+  // Export match data as printable PDF
+  const exportMatchPDF = () => {
+    if (!matchConfig) {
+      toast({ variant: 'destructive', title: 'No match data to export' });
+      return;
+    }
+
+    const formatTime = () => new Date().toLocaleString();
+    const crr = calculateCRR();
+    const rrr = calculateRRR();
+
+    let content = `
+===========================================
+       CRICKET MATCH SCORECARD
+===========================================
+Generated: ${formatTime()}
+
+MATCH: ${matchConfig.team1.name} vs ${matchConfig.team2.name}
+Format: ${matchConfig.totalOvers} Overs
+Toss: ${matchConfig.tossWinner === 'team1' ? matchConfig.team1.name : matchConfig.team2.name} won, chose to ${matchConfig.tossDecision}
+
+===========================================
+        INNINGS 1 - ${getBattingTeam()?.name}
+===========================================
+Score: ${innings1Score.runs}/${innings1Score.wickets} (${innings1Score.overs}.${innings1Score.balls} overs)
+
+BATTING
+-------
+${'Batter'.padEnd(20)} ${'R'.padStart(4)} ${'B'.padStart(4)} ${'4s'.padStart(3)} ${'6s'.padStart(3)} ${'SR'.padStart(7)}
+${'-'.repeat(50)}
+${innings1Batting.map(b =>
+      `${b.player.name.slice(0, 18).padEnd(20)} ${String(b.runs).padStart(4)} ${String(b.balls).padStart(4)} ${String(b.fours).padStart(3)} ${String(b.sixes).padStart(3)} ${(b.balls > 0 ? ((b.runs / b.balls) * 100).toFixed(1) : '0.0').padStart(7)}`
+    ).join('\n')}
+
+BOWLING
+-------
+${'Bowler'.padEnd(20)} ${'O'.padStart(4)} ${'M'.padStart(3)} ${'R'.padStart(4)} ${'W'.padStart(3)} ${'Econ'.padStart(6)}
+${'-'.repeat(50)}
+${innings1Bowling.map(b =>
+      `${b.player.name.slice(0, 18).padEnd(20)} ${(b.overs + (b.balls > 0 ? '.' + b.balls : '')).toString().padStart(4)} ${String(b.maidens).padStart(3)} ${String(b.runs).padStart(4)} ${String(b.wickets).padStart(3)} ${(b.overs > 0 ? (b.runs / b.overs).toFixed(2) : '0.00').padStart(6)}`
+    ).join('\n')}
+`;
+
+    if (currentInnings === 2 || innings2Score.runs > 0) {
+      content += `
+===========================================
+        INNINGS 2 - ${getBowlingTeam()?.name}
+===========================================
+Score: ${innings2Score.runs}/${innings2Score.wickets} (${innings2Score.overs}.${innings2Score.balls} overs)
+Target: ${innings1Score.runs + 1}
+
+BATTING
+-------
+${'Batter'.padEnd(20)} ${'R'.padStart(4)} ${'B'.padStart(4)} ${'4s'.padStart(3)} ${'6s'.padStart(3)} ${'SR'.padStart(7)}
+${'-'.repeat(50)}
+${innings2Batting.map(b =>
+        `${b.player.name.slice(0, 18).padEnd(20)} ${String(b.runs).padStart(4)} ${String(b.balls).padStart(4)} ${String(b.fours).padStart(3)} ${String(b.sixes).padStart(3)} ${(b.balls > 0 ? ((b.runs / b.balls) * 100).toFixed(1) : '0.0').padStart(7)}`
+      ).join('\n')}
+
+BOWLING
+-------
+${'Bowler'.padEnd(20)} ${'O'.padStart(4)} ${'M'.padStart(3)} ${'R'.padStart(4)} ${'W'.padStart(3)} ${'Econ'.padStart(6)}
+${'-'.repeat(50)}
+${innings2Bowling.map(b =>
+        `${b.player.name.slice(0, 18).padEnd(20)} ${(b.overs + (b.balls > 0 ? '.' + b.balls : '')).toString().padStart(4)} ${String(b.maidens).padStart(3)} ${String(b.runs).padStart(4)} ${String(b.wickets).padStart(3)} ${(b.overs > 0 ? (b.runs / b.overs).toFixed(2) : '0.00').padStart(6)}`
+      ).join('\n')}
+`;
+    }
+
+    content += `
+===========================================
+          MATCH STATISTICS
+===========================================
+Current Run Rate (CRR): ${crr.toFixed(2)}
+${rrr ? `Required Run Rate (RRR): ${rrr.toFixed(2)}` : ''}
+
+===========================================
+`;
+
+    // Open print dialog
+    const printWindow = window.open('', '_blank');
+    if (printWindow) {
+      printWindow.document.write(`
+        <html>
+          <head>
+            <title>Match Scorecard - ${matchConfig.team1.name} vs ${matchConfig.team2.name}</title>
+            <style>
+              body { font-family: 'Courier New', monospace; padding: 20px; white-space: pre-wrap; }
+            </style>
+          </head>
+          <body>${content}</body>
+        </html>
+      `);
+      printWindow.document.close();
+      printWindow.print();
+    }
+
+    toast({ title: '📄 PDF Export', description: 'Print dialog opened - save as PDF' });
+  };
+
   // Update match status to completed
   const completeMatch = async (winnerId: string | null, resultSummary: string) => {
     if (!matchId) return;
@@ -531,6 +1010,16 @@ const LiveScoring = () => {
       batter: striker,
       bowler: currentBowler,
     };
+
+    // Track wagon wheel data for runs scored (not extras)
+    if (runs > 0 && !extraType && striker) {
+      const angle = Math.random() * 360; // Random shot direction
+      setWagonWheelData(prev => [...prev, {
+        angle,
+        runs,
+        batter: striker.name
+      }]);
+    }
 
     // Update score
     if (!isBallNotValid) {
@@ -647,6 +1136,13 @@ const LiveScoring = () => {
         balls: updatedOverBalls,
         commentary: overCommentary,
       }]);
+
+      // Update Manhattan chart data (runs per over)
+      if (currentInnings === 1) {
+        setInnings1RunsPerOver(prev => [...prev, overRuns]);
+      } else {
+        setInnings2RunsPerOver(prev => [...prev, overRuns]);
+      }
 
       // Rotate strike at end of over
       setStriker(nonStriker);
@@ -935,6 +1431,16 @@ const LiveScoring = () => {
     const newBatter = battingXI.find(p => p.id === playerId);
     if (!newBatter) return;
 
+    // Prevent selecting same player twice
+    if (striker?.id === playerId || nonStriker?.id === playerId) {
+      toast({
+        variant: 'destructive',
+        title: 'Player already selected',
+        description: 'This player is already on the crease.',
+      });
+      return;
+    }
+
     // Add to scorecard if not already there
     setBattingScorecard(prev => {
       const exists = prev.find(b => b.player.id === playerId);
@@ -944,18 +1450,24 @@ const LiveScoring = () => {
       return prev;
     });
 
+    // First opening batter
     if (!striker) {
       setStriker(newBatter);
-      if (!nonStriker && currentInnings === 2) {
-        // Need second opener for second innings
-        return;
+      // For second innings start or match start, need second opener
+      if (!nonStriker) {
+        return; // Keep dialog open for second batter
       }
-    } else if (!nonStriker) {
+    }
+    // Second opening batter
+    else if (!nonStriker) {
       setNonStriker(newBatter);
     }
 
-    // Check if we have both batters
-    if ((striker || newBatter) && (nonStriker || (!striker && newBatter))) {
+    // Close dialog once we have both batters
+    if (striker && nonStriker) {
+      setShowNewBatterSelect(false);
+    } else if (striker && newBatter) {
+      // Just selected second batter
       setShowNewBatterSelect(false);
     }
   };
@@ -982,6 +1494,7 @@ const LiveScoring = () => {
     if (lastBalls.length === 0) return;
 
     const lastBall = lastBalls[lastBalls.length - 1];
+    const wasOverComplete = lastBall.isLegal && currentScore.balls === 0 && currentScore.overs > 0;
 
     setCurrentScore(prev => {
       let newBalls = prev.balls;
@@ -989,6 +1502,7 @@ const LiveScoring = () => {
 
       if (lastBall.isLegal) {
         if (prev.balls === 0 && prev.overs > 0) {
+          // Undoing a ball from a just-completed over
           newOvers = prev.overs - 1;
           newBalls = 5;
         } else if (prev.balls > 0) {
@@ -1005,13 +1519,47 @@ const LiveScoring = () => {
       };
     });
 
+    // If we're undoing after an over completed, restore the previous bowler
+    if (wasOverComplete && overHistory.length > 0) {
+      const lastOverData = overHistory[overHistory.length - 1];
+
+      // Restore the bowler who bowled the last over
+      setCurrentBowler(lastOverData.bowler);
+
+      // Restore the over balls
+      setCurrentOverBalls(lastOverData.balls.slice(0, -1));
+
+      // Remove the last over from history
+      setOverHistory(prev => prev.slice(0, -1));
+
+      // Undo the bowler overs count
+      setUsedBowlers(prev => {
+        const newMap = new Map(prev);
+        const currentOvers = newMap.get(lastOverData.bowler.id) || 0;
+        if (currentOvers > 0) {
+          newMap.set(lastOverData.bowler.id, currentOvers - 1);
+        }
+        return newMap;
+      });
+
+      // Undo strike rotation (was rotated at end of over)
+      if (striker && nonStriker) {
+        setStriker(nonStriker);
+        setNonStriker(striker);
+      }
+
+      // Close bowler select if open
+      setShowBowlerSelect(false);
+    } else {
+      setCurrentOverBalls(prev => prev.slice(0, -1));
+    }
+
     setLastBalls(prev => prev.slice(0, -1));
-    setCurrentOverBalls(prev => prev.slice(0, -1));
     setAiCommentary('');
 
     toast({
       title: "Ball undone",
-      description: "Last ball has been removed",
+      description: wasOverComplete ? "Over restored - previous bowler selected" : "Last ball has been removed",
     });
   };
 
@@ -1209,31 +1757,51 @@ const LiveScoring = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-dark py-4 px-4">
+    <div className="min-h-screen bg-gradient-dark py-2 px-2 sm:py-4 sm:px-4">
       <div className="max-w-4xl mx-auto">
-        {/* Header */}
-        <div className="flex items-center gap-4 mb-4">
+        {/* Header - Single Row on Mobile */}
+        <div className="flex items-center gap-2 mb-2 sm:mb-4 flex-nowrap overflow-hidden">
           <button
             onClick={() => navigate(-1)}
-            className="p-2 rounded-lg hover:bg-secondary transition-colors"
+            className="p-1.5 sm:p-2 rounded-lg hover:bg-secondary transition-colors shrink-0"
           >
-            <ArrowLeft className="w-5 h-5" />
+            <ArrowLeft className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
-          <div className="flex-1">
-            <h1 className="text-lg font-display font-bold">
+          <div className="flex-1 min-w-0">
+            <h1 className="text-sm sm:text-lg font-display font-bold truncate">
               {matchConfig?.team1.name} vs {matchConfig?.team2.name}
             </h1>
-            <p className="text-xs text-muted-foreground">
-              {matchConfig?.totalOvers} overs • Innings {currentInnings}
+            <p className="text-[10px] sm:text-xs text-muted-foreground">
+              {matchConfig?.totalOvers}ov • Inn {currentInnings}
             </p>
           </div>
-          <span className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-live/20 text-live text-sm font-semibold">
-            <span className="relative flex h-2 w-2">
+          <span className="flex items-center gap-1 px-2 py-0.5 sm:px-3 sm:py-1 rounded-lg bg-live/20 text-live text-xs sm:text-sm font-semibold shrink-0">
+            <span className="relative flex h-1.5 w-1.5 sm:h-2 sm:w-2">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-live opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-live"></span>
+              <span className="relative inline-flex rounded-full h-1.5 w-1.5 sm:h-2 sm:w-2 bg-live"></span>
             </span>
             LIVE
           </span>
+          {matchId && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={shareMatch}
+              className="text-[10px] sm:text-xs px-2 shrink-0"
+            >
+              <Share2 className="w-3 h-3" />
+              <span className="hidden sm:inline ml-1">Share</span>
+            </Button>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={exportMatchPDF}
+            className="text-[10px] sm:text-xs px-2 shrink-0"
+          >
+            <FileDown className="w-3 h-3" />
+            <span className="hidden sm:inline ml-1">PDF</span>
+          </Button>
         </div>
 
         {/* Compact Scoreboard */}
@@ -1289,6 +1857,43 @@ const LiveScoring = () => {
                 </p>
               </div>
             </div>
+
+            {/* Player Change Buttons */}
+            <div className="flex flex-wrap gap-2 mt-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={swapBatsmen}
+                className="text-xs"
+              >
+                🔄 Swap Batsmen
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowChangeStriker(true)}
+                className="text-xs"
+              >
+                ⚡ Change Striker
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowChangeNonStriker(true)}
+                className="text-xs"
+              >
+                👤 Change Non-Striker
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowChangeBowler(true)}
+                className="text-xs"
+              >
+                🎯 Change Bowler
+              </Button>
+            </div>
+
 
             {/* This Over */}
             <div className="mt-3 pt-3 border-t border-border">
@@ -1442,6 +2047,45 @@ const LiveScoring = () => {
           </CardContent>
         </Card>
 
+        {/* Match Stats - Compact View */}
+        <Card variant="gradient" className="mb-2 sm:mb-4">
+          <CardContent className="p-2 sm:p-3">
+            <div className="flex items-center gap-2 mb-1 sm:mb-2">
+              <span className="text-xs font-semibold text-primary">📊 Stats</span>
+            </div>
+            <div className="grid grid-cols-4 gap-1 sm:gap-3 text-center">
+              <div>
+                <p className="text-base sm:text-xl font-bold text-primary">{calculateCRR().toFixed(1)}</p>
+                <p className="text-[8px] sm:text-[10px] text-muted-foreground">CRR</p>
+              </div>
+              <div>
+                <p className="text-base sm:text-xl font-bold text-accent">{calculateRRR()?.toFixed(1) || '-'}</p>
+                <p className="text-[8px] sm:text-[10px] text-muted-foreground">RRR</p>
+              </div>
+              <div>
+                <p className="text-base sm:text-xl font-bold">{getUniqueBowlersCount()}/{matchConfig?.maxOversPerBowler ? Math.ceil((matchConfig?.totalOvers || 20) / matchConfig.maxOversPerBowler) : 5}</p>
+                <p className="text-[8px] sm:text-[10px] text-muted-foreground">Bowlers</p>
+              </div>
+              <div>
+                <p className="text-base sm:text-xl font-bold text-energy">{getCurrentPowerplay() === 'powerplay' ? 'PP' : getCurrentPowerplay() === 'death' ? 'DT' : 'MD'}</p>
+                <p className="text-[8px] sm:text-[10px] text-muted-foreground">Phase</p>
+              </div>
+            </div>
+            {/* Win Probability Bar */}
+            <div className="mt-2">
+              <div className="flex justify-between text-[8px] sm:text-[10px] text-muted-foreground mb-0.5">
+                <span>{getBattingTeam()?.name} {calculateWinProbability().batting}%</span>
+                <span>{getBowlingTeam()?.name} {calculateWinProbability().bowling}%</span>
+              </div>
+              <div className="h-1.5 sm:h-2 rounded-full bg-secondary overflow-hidden flex">
+                <div
+                  className="bg-gradient-to-r from-primary to-accent h-full transition-all duration-500"
+                  style={{ width: `${calculateWinProbability().batting}%` }}
+                />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
         {/* AI Commentary */}
         {(aiCommentary || loadingCommentary) && (
           <Card variant="gradient" className="mb-4">
@@ -1527,6 +2171,98 @@ const LiveScoring = () => {
                       </div>
                     ))}
                   </div>
+                </div>
+              )}
+
+              {/* Manhattan Chart (Runs per Over) */}
+              {(innings1RunsPerOver.length > 0 || innings2RunsPerOver.length > 0) && (
+                <div>
+                  <h4 className="text-sm font-semibold mb-2 text-primary flex items-center gap-2">
+                    <span>📈</span> Manhattan Chart (Runs per Over)
+                  </h4>
+                  <div className="bg-secondary/30 rounded-lg p-3">
+                    <div className="flex items-end gap-1 h-24 overflow-x-auto">
+                      {(currentInnings === 1 ? innings1RunsPerOver : innings2RunsPerOver).map((runs, idx) => {
+                        const maxRuns = Math.max(...(currentInnings === 1 ? innings1RunsPerOver : innings2RunsPerOver), 1);
+                        const heightPercent = (runs / maxRuns) * 100;
+                        return (
+                          <div key={idx} className="flex flex-col items-center min-w-[24px]">
+                            <div
+                              className={`w-5 rounded-t transition-all ${runs >= 15 ? 'bg-energy' :
+                                runs >= 10 ? 'bg-accent' :
+                                  runs >= 6 ? 'bg-primary' :
+                                    'bg-primary/50'
+                                }`}
+                              style={{ height: `${Math.max(heightPercent, 5)}%` }}
+                              title={`Over ${idx + 1}: ${runs} runs`}
+                            />
+                            <span className="text-[8px] text-muted-foreground mt-0.5">{idx + 1}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="flex justify-between text-[10px] text-muted-foreground mt-2">
+                      <span>Innings {currentInnings}</span>
+                      <span>Total: {(currentInnings === 1 ? innings1RunsPerOver : innings2RunsPerOver).reduce((a, b) => a + b, 0)} runs</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Wagon Wheel Visualization */}
+              {wagonWheelData.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-semibold mb-2 text-primary flex items-center gap-2">
+                    <span>🎯</span> Wagon Wheel
+                  </h4>
+                  <div className="bg-secondary/30 rounded-lg p-3 flex justify-center">
+                    <svg viewBox="0 0 200 200" className="w-48 h-48">
+                      {/* Cricket field outline */}
+                      <circle cx="100" cy="100" r="90" fill="none" stroke="currentColor" className="text-primary/20" strokeWidth="1" />
+                      <circle cx="100" cy="100" r="60" fill="none" stroke="currentColor" className="text-primary/10" strokeWidth="1" strokeDasharray="4 4" />
+                      <circle cx="100" cy="100" r="30" fill="none" stroke="currentColor" className="text-primary/10" strokeWidth="1" strokeDasharray="2 2" />
+
+                      {/* Pitch */}
+                      <rect x="97" y="85" width="6" height="30" fill="currentColor" className="text-secondary" />
+
+                      {/* Shot lines */}
+                      {wagonWheelData.map((shot, idx) => {
+                        const angleRad = (shot.angle * Math.PI) / 180;
+                        const length = 30 + (shot.runs * 15);
+                        const x2 = 100 + Math.cos(angleRad) * Math.min(length, 85);
+                        const y2 = 100 + Math.sin(angleRad) * Math.min(length, 85);
+                        const strokeColor = shot.runs === 6 ? '#FFD700' : // Gold for 6
+                          shot.runs === 4 ? '#22C55E' : // Green for 4
+                            shot.runs >= 2 ? '#3B82F6' :  // Blue for 2-3
+                              '#94A3B8';                     // Gray for 1
+                        return (
+                          <line
+                            key={idx}
+                            x1="100"
+                            y1="100"
+                            x2={x2}
+                            y2={y2}
+                            stroke={strokeColor}
+                            strokeWidth={shot.runs >= 4 ? 2 : 1}
+                            strokeLinecap="round"
+                            opacity={0.8}
+                          />
+                        );
+                      })}
+
+                      {/* Center dot (batter position) */}
+                      <circle cx="100" cy="100" r="4" fill="currentColor" className="text-primary" />
+                    </svg>
+                  </div>
+                  <div className="flex justify-center gap-3 mt-2 text-[10px]">
+                    <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-[#FFD700]"></span> 6</span>
+                    <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-[#22C55E]"></span> 4</span>
+                    <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-[#3B82F6]"></span> 2-3</span>
+                    <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-[#94A3B8]"></span> 1</span>
+                  </div>
+                  <p className="text-[10px] text-center text-muted-foreground mt-1">
+                    {wagonWheelData.length} shots tracked
+                  </p>
                 </div>
               )}
 
@@ -1760,6 +2496,87 @@ const LiveScoring = () => {
             </Card>
           </div>
         )}
+
+        {/* Change Striker Dialog */}
+        <Dialog open={showChangeStriker} onOpenChange={setShowChangeStriker}>
+          <DialogContent className="bg-card border-border">
+            <DialogHeader>
+              <DialogTitle>Change Striker</DialogTitle>
+              <DialogDescription>Select a new striker from the batting XI</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2 max-h-64 overflow-y-auto">
+              {getBattingXI().filter(p =>
+                !dismissedBatters.has(p.id) &&
+                p.id !== striker?.id &&
+                p.id !== nonStriker?.id
+              ).map(player => (
+                <Button
+                  key={player.id}
+                  variant="outline"
+                  className="w-full justify-start"
+                  onClick={() => changeStriker(player.id)}
+                >
+                  {player.name} {player.jersey_number ? `#${player.jersey_number}` : ''}
+                </Button>
+              ))}
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Change Non-Striker Dialog */}
+        <Dialog open={showChangeNonStriker} onOpenChange={setShowChangeNonStriker}>
+          <DialogContent className="bg-card border-border">
+            <DialogHeader>
+              <DialogTitle>Change Non-Striker</DialogTitle>
+              <DialogDescription>Select a new non-striker from the batting XI</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2 max-h-64 overflow-y-auto">
+              {getBattingXI().filter(p =>
+                !dismissedBatters.has(p.id) &&
+                p.id !== striker?.id &&
+                p.id !== nonStriker?.id
+              ).map(player => (
+                <Button
+                  key={player.id}
+                  variant="outline"
+                  className="w-full justify-start"
+                  onClick={() => changeNonStriker(player.id)}
+                >
+                  {player.name} {player.jersey_number ? `#${player.jersey_number}` : ''}
+                </Button>
+              ))}
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Change Bowler Dialog */}
+        <Dialog open={showChangeBowler} onOpenChange={setShowChangeBowler}>
+          <DialogContent className="bg-card border-border">
+            <DialogHeader>
+              <DialogTitle>Change Bowler</DialogTitle>
+              <DialogDescription>Select a new bowler from the bowling XI</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2 max-h-64 overflow-y-auto">
+              {getBowlingXI().filter(p => p.id !== currentBowler?.id).map(player => {
+                const oversUsed = usedBowlers.get(player.id) || 0;
+                const maxOvers = matchConfig?.maxOversPerBowler;
+                const canBowl = !maxOvers || oversUsed < maxOvers;
+                return (
+                  <Button
+                    key={player.id}
+                    variant="outline"
+                    className="w-full justify-between"
+                    onClick={() => changeBowler(player.id)}
+                    disabled={!canBowl}
+                  >
+                    <span>{player.name} {player.jersey_number ? `#${player.jersey_number}` : ''}</span>
+                    <span className="text-xs text-muted-foreground">{oversUsed}/{maxOvers || '∞'} overs</span>
+                  </Button>
+                );
+              })}
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {/* Dismissal Dialog */}
         <DismissalDialog

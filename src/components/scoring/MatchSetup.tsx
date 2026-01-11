@@ -368,10 +368,28 @@ const MatchSetup = ({ onComplete, onCancel }: MatchSetupProps) => {
             <div className="grid md:grid-cols-2 gap-6">
               {/* Team 1 */}
               <div>
-                <h4 className="font-medium mb-3 flex items-center gap-2">
-                  {team1.name}
-                  <span className="text-sm text-muted-foreground">({team1PlayingXI.length}/11)</span>
-                </h4>
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="font-medium flex items-center gap-2">
+                    {team1.name}
+                    <span className="text-sm text-muted-foreground">({team1PlayingXI.length}/11)</span>
+                  </h4>
+                  {team1.players.length > 0 && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-xs"
+                      onClick={() => {
+                        if (team1PlayingXI.length === team1.players.length) {
+                          setTeam1PlayingXI([]);
+                        } else {
+                          setTeam1PlayingXI(team1.players.slice(0, 11).map(p => p.id));
+                        }
+                      }}
+                    >
+                      {team1PlayingXI.length === team1.players.length ? 'Deselect All' : 'Select All'}
+                    </Button>
+                  )}
+                </div>
                 <div className="space-y-2 max-h-64 overflow-y-auto">
                   {team1.players.map((player) => (
                     <div
@@ -384,7 +402,12 @@ const MatchSetup = ({ onComplete, onCancel }: MatchSetupProps) => {
                     >
                       <Checkbox checked={team1PlayingXI.includes(player.id)} />
                       <div className="flex-1">
-                        <p className="text-sm font-medium">{player.name}</p>
+                        <p className="text-sm font-medium flex items-center gap-2">
+                          {player.name}
+                          {player.role === 'Captain' && (
+                            <span className="text-yellow-500 text-[10px] font-bold">👑</span>
+                          )}
+                        </p>
                         <p className="text-xs text-muted-foreground">
                           {player.jersey_number ? `#${player.jersey_number}` : ''} {player.role || ''}
                         </p>
@@ -399,10 +422,28 @@ const MatchSetup = ({ onComplete, onCancel }: MatchSetupProps) => {
 
               {/* Team 2 */}
               <div>
-                <h4 className="font-medium mb-3 flex items-center gap-2">
-                  {team2.name}
-                  <span className="text-sm text-muted-foreground">({team2PlayingXI.length}/11)</span>
-                </h4>
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="font-medium flex items-center gap-2">
+                    {team2.name}
+                    <span className="text-sm text-muted-foreground">({team2PlayingXI.length}/11)</span>
+                  </h4>
+                  {team2.players.length > 0 && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-xs"
+                      onClick={() => {
+                        if (team2PlayingXI.length === team2.players.length) {
+                          setTeam2PlayingXI([]);
+                        } else {
+                          setTeam2PlayingXI(team2.players.slice(0, 11).map(p => p.id));
+                        }
+                      }}
+                    >
+                      {team2PlayingXI.length === team2.players.length ? 'Deselect All' : 'Select All'}
+                    </Button>
+                  )}
+                </div>
                 <div className="space-y-2 max-h-64 overflow-y-auto">
                   {team2.players.map((player) => (
                     <div
@@ -415,7 +456,12 @@ const MatchSetup = ({ onComplete, onCancel }: MatchSetupProps) => {
                     >
                       <Checkbox checked={team2PlayingXI.includes(player.id)} />
                       <div className="flex-1">
-                        <p className="text-sm font-medium">{player.name}</p>
+                        <p className="text-sm font-medium flex items-center gap-2">
+                          {player.name}
+                          {player.role === 'Captain' && (
+                            <span className="text-yellow-500 text-[10px] font-bold">👑</span>
+                          )}
+                        </p>
                         <p className="text-xs text-muted-foreground">
                           {player.jersey_number ? `#${player.jersey_number}` : ''} {player.role || ''}
                         </p>
