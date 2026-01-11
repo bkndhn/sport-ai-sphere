@@ -278,8 +278,8 @@ const MatchSetup = ({ onComplete, onCancel }: MatchSetupProps) => {
   }
 
   return (
-    <Card variant="gradient" className="max-w-2xl mx-auto">
-      <CardHeader>
+    <Card variant="gradient" className="max-w-2xl mx-auto mx-2 sm:mx-auto">
+      <CardHeader className="px-4 sm:px-6 py-4">
         <div className="flex items-center justify-between mb-4">
           <CardTitle className="flex items-center gap-2">
             <Trophy className="w-5 h-5 text-primary" />
@@ -486,7 +486,7 @@ const MatchSetup = ({ onComplete, onCancel }: MatchSetupProps) => {
           >
             <div className="space-y-2">
               <Label>Overs per Innings</Label>
-              <div className="flex gap-2">
+              <div className="flex gap-2 flex-wrap">
                 {[5, 10, 15, 20, 50].map((overs) => (
                   <Button
                     key={overs}
@@ -500,13 +500,27 @@ const MatchSetup = ({ onComplete, onCancel }: MatchSetupProps) => {
                     {overs}
                   </Button>
                 ))}
-                <Input
-                  type="number"
-                  value={totalOvers}
-                  onChange={(e) => setTotalOvers(parseInt(e.target.value) || 20)}
-                  className="w-20 bg-secondary/50"
-                  min={1}
-                />
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setTotalOvers(Math.max(1, totalOvers - 1))}
+                    className="h-9 w-9 p-0"
+                  >
+                    -
+                  </Button>
+                  <div className="w-12 h-9 flex items-center justify-center bg-secondary/50 rounded border border-border font-medium">
+                    {totalOvers}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setTotalOvers(Math.min(99, totalOvers + 1))}
+                    className="h-9 w-9 p-0"
+                  >
+                    +
+                  </Button>
+                </div>
               </div>
             </div>
             <div className="space-y-2">
